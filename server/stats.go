@@ -186,185 +186,85 @@ func share(n, d int) float64 {
 	return float64(n) / float64(d)
 }
 
-func computeStats(recs []*Record, byKey map[string][]*Record, now time.Time) *Stats {
+func computeStats(a *aggregates, now time.Time) *Stats {
 	st := &Stats{
 		GeneratedAt: now.UTC(),
-		Severity:    map[string]int{"1": 0, "2": 0, "3": 0, "4": 0},
+		Severity:    map[string]int{"1": a.severity[1], "2": a.severity[2], "3": a.severity[3], "4": a.severity[4]},
 		Asks:        AskAudit{ByClass: map[string]Responses{}},
 		Families:    []FamilyStats{},
 		Domains:     []DomainStats{},
 	}
-	d7, d30 := now.Add(-7*24*time.Hour), now.Add(-30*24*time.Hour)
-
-	type win struct{ n, inc, com int }
-	var w7, w30 win
-
-	tagIdx := map[string]*TagCount{}
-	st.Tags = make([]TagCount, len(tags))
-	for i, t := range tags {
-		st.Tags[i] = TagCount{ID: t.ID, Label: t.Label, Kind: t.Kind}
-		tagIdx[t.ID] = &st.Tags[i]
+	st.Totals = Totals{
+		Filings:       a.filings,
+		Incidents:     a.incidents,
+		Commendations: a.commendations,
+		Humans:        a.humansSeen,
+		Humans30:      a.humansSince(now.Add(-30 * 24 * time.Hour).Unix()),
 	}
+	w7, w30 := a.window(now, 7), a.window(now, 30)
 
-	compHits := make([]int, len(components))
-	first7 := map[string]time.Time{}
-	dayIdx := map[string]*Day{}
-	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -29)
-	for i := 0; i < 30; i++ {
-		d := start.AddDate(0, 0, i).Format("2006-01-02")
-		st.Days = append(st.Days, Day{Date: d})
-	}
-	for i := range st.Days {
-		dayIdx[st.Days[i].Date] = &st.Days[i]
-	}
-
-	fams := map[string]*FamilyStats{}
-	doms := map[string]*DomainStats{}
-	humans30 := map[string]bool{}
-
-	for _, r := range recs {
-		f := &r.Filing
-		inc := f.Kind == KindIncident
-		st.Totals.Filings++
-		if inc {
-			st.Totals.Incidents++
-			if f.Severity >= 1 && f.Severity <= 4 {
-				st.Severity[string(rune('0'+f.Severity))]++
-			}
-		} else {
-			st.Totals.Commendations++
-		}
-		in7, in30 := r.At.After(d7), r.At.After(d30)
-		bump := func(w *win) {
-			w.n++
-			if inc {
-				w.inc++
-			} else {
-				w.com++
-			}
-		}
-		if in7 {
-			bump(&w7)
-		}
-		if in30 {
-			bump(&w30)
-			humans30[r.KeyID] = true
-			for ci, c := range components {
-				if hitsComponent(c, f) {
-					compHits[ci]++
-				}
-			}
-		}
-		for _, id := range f.Tags {
-			if tc := tagIdx[id]; tc != nil {
-				if tc.LastAt == nil || r.At.After(*tc.LastAt) {
-					at := r.At.UTC()
-					tc.LastAt = &at
-				}
-				if in7 && (first7[id].IsZero() || r.At.Before(first7[id])) {
-					first7[id] = r.At.UTC()
-				}
-				tc.All++
-				if in30 {
-					tc.D30++
-				}
-				if in7 {
-					tc.D7++
-				}
-			}
-		}
-		if d := dayIdx[r.At.UTC().Format("2006-01-02")]; d != nil {
-			if inc {
-				d.Incidents++
-			} else {
-				d.Commendations++
-			}
-		}
-
-		fam := r.fam
-		if fam == "" {
-			fam = family(f.Model)
-		}
-		fs := fams[fam]
-		if fs == nil {
-			fs = &FamilyStats{Family: fam}
-			fams[fam] = fs
-		}
-		fs.Filings++
-		if inc {
-			fs.Incidents++
-		} else {
-			fs.Commendations++
-		}
-
-		ds := doms[f.Domain]
-		if ds == nil {
-			ds = &DomainStats{ID: f.Domain}
-			doms[f.Domain] = ds
-		}
-		ds.Filings++
-		if inc {
-			ds.Incidents++
-		}
-
-		if f.Ask != nil {
-			rs := st.Asks.ByClass[f.Ask.Class]
-			rs.add(f.Ask.Response)
-			st.Asks.ByClass[f.Ask.Class] = rs
-			if f.Ask.Class != AskBenign {
-				st.Asks.OffAsks++
-				fs.OffAsks.add(f.Ask.Response)
-			}
-		}
-	}
-
-	st.Totals.Humans = len(byKey)
-	st.Totals.Humans30 = len(humans30)
 	if st.Totals.Filings > 0 {
 		st.UptimeAll = ptr(share(st.Totals.Commendations, st.Totals.Filings))
 	}
-	if w30.n > 0 {
-		st.Uptime30 = ptr(share(w30.com, w30.n))
+	if w30.N > 0 {
+		st.Uptime30 = ptr(share(w30.Com, w30.N))
 	}
 
 	// Overall status: the last week if it has enough filings, else the last month.
-	st.Status = Status{Level: LevelNoData, Window: "30d", Filings: w30.n}
+	st.Status = Status{Level: LevelNoData, Window: "30d", Filings: w30.N}
 	switch {
-	case w7.n >= MinStatusCount:
-		u := share(w7.com, w7.n)
-		st.Status = Status{Level: uptimeLevel(u), Window: "7d", Uptime: ptr(u), Filings: w7.n}
-	case w30.n >= MinStatusCount:
-		u := share(w30.com, w30.n)
-		st.Status = Status{Level: uptimeLevel(u), Window: "30d", Uptime: ptr(u), Filings: w30.n}
+	case w7.N >= MinStatusCount:
+		u := share(w7.Com, w7.N)
+		st.Status = Status{Level: uptimeLevel(u), Window: "7d", Uptime: ptr(u), Filings: w7.N}
+	case w30.N >= MinStatusCount:
+		u := share(w30.Com, w30.N)
+		st.Status = Status{Level: uptimeLevel(u), Window: "30d", Uptime: ptr(u), Filings: w30.N}
 	}
 	st.Status.Label = levelLabel[st.Status.Level]
 	st.Status.Summary = levelSummary[st.Status.Level]
 
 	for ci, c := range components {
-		cs := ComponentStatus{Component: c, Hits: compHits[ci], Filings: w30.n, Level: LevelNoData}
-		if w30.n >= MinStatusCount {
-			cs.Rate = share(compHits[ci], w30.n)
+		cs := ComponentStatus{Component: c, Hits: int(w30.Comps[ci]), Filings: w30.N, Level: LevelNoData}
+		if w30.N >= MinStatusCount {
+			cs.Rate = share(cs.Hits, w30.N)
 			cs.Level = rateLevel(cs.Rate)
 		}
 		cs.Label = levelLabel[cs.Level]
 		st.Components = append(st.Components, cs)
 	}
 
-	for i := range st.Days {
-		d := &st.Days[i]
-		n := d.Incidents + d.Commendations
-		d.Level = LevelNoData
-		if n > 0 {
-			d.Level = uptimeLevel(share(d.Commendations, n))
+	today := now.UTC().Truncate(24 * time.Hour)
+	for i := 29; i >= 0; i-- {
+		date := today.AddDate(0, 0, -i).Format("2006-01-02")
+		d := Day{Date: date, Level: LevelNoData}
+		if b := a.dayIdx[date]; b != nil {
+			d.Incidents, d.Commendations = b.Inc, b.Com
+			if n := b.Inc + b.Com; n > 0 {
+				d.Level = uptimeLevel(share(b.Com, n))
+			}
 		}
+		st.Days = append(st.Days, d)
 	}
 
-	for _, fs := range fams {
-		fs.IncidentShare = share(fs.Incidents, fs.Filings)
-		if t := fs.OffAsks.total(); t > 0 {
-			fs.Integrity = ptr(share(fs.OffAsks.PushedBack+fs.OffAsks.Refused, t))
+	st.Tags = make([]TagCount, len(tags))
+	for i, t := range tags {
+		tc := TagCount{ID: t.ID, Label: t.Label, Kind: t.Kind, D7: int(w7.Tags[i]), D30: int(w30.Tags[i]), All: int(a.tagsAll[i])}
+		if a.tagLast[i] != 0 {
+			at := time.Unix(a.tagLast[i], 0).UTC()
+			tc.LastAt = &at
+			d := int(now.Sub(at).Hours() / 24)
+			tc.DaysSince = &d
 		}
-		st.Families = append(st.Families, *fs)
+		st.Tags[i] = tc
+	}
+
+	for name, fs := range a.families {
+		f := FamilyStats{Family: name, Filings: fs.Filings, Incidents: fs.Incidents, Commendations: fs.Commendations, OffAsks: fs.Off}
+		f.IncidentShare = share(f.Incidents, f.Filings)
+		if t := fs.Off.total(); t > 0 {
+			f.Integrity = ptr(share(fs.Off.PushedBack+fs.Off.Refused, t))
+		}
+		st.Families = append(st.Families, f)
 	}
 	sort.Slice(st.Families, func(i, j int) bool {
 		if st.Families[i].Filings != st.Families[j].Filings {
@@ -373,9 +273,8 @@ func computeStats(recs []*Record, byKey map[string][]*Record, now time.Time) *St
 		return st.Families[i].Family < st.Families[j].Family
 	})
 
-	for _, ds := range doms {
-		ds.IncidentShare = share(ds.Incidents, ds.Filings)
-		st.Domains = append(st.Domains, *ds)
+	for id, ds := range a.domains {
+		st.Domains = append(st.Domains, DomainStats{ID: id, Filings: ds.Filings, Incidents: ds.Incidents, IncidentShare: share(ds.Incidents, ds.Filings)})
 	}
 	sort.Slice(st.Domains, func(i, j int) bool {
 		if st.Domains[i].Filings != st.Domains[j].Filings {
@@ -384,27 +283,16 @@ func computeStats(recs []*Record, byKey map[string][]*Record, now time.Time) *St
 		return st.Domains[i].ID < st.Domains[j].ID
 	})
 
-	for i := range st.Tags {
-		if t := st.Tags[i].LastAt; t != nil {
-			d := int(now.Sub(*t).Hours() / 24)
-			st.Tags[i].DaysSince = &d
-		}
-	}
-
 	// The active incident is the incident tag filed most in the last week.
-	var top *TagCount
-	for i := range st.Tags {
-		t := &st.Tags[i]
-		if t.Kind != KindIncident || t.D7 == 0 {
-			continue
-		}
-		if top == nil || t.D7 > top.D7 {
-			top = t
+	top := -1
+	for i, t := range tags {
+		if t.Kind == KindIncident && w7.Tags[i] > 0 && (top < 0 || w7.Tags[i] > w7.Tags[top]) {
+			top = i
 		}
 	}
-	if top != nil {
-		if pb, ok := incidentPlaybook[top.ID]; ok {
-			inc := &Incident{Tag: top.ID, Title: pb.Title, Filings: top.D7, StartedAt: first7[top.ID]}
+	if top >= 0 {
+		if pb, ok := incidentPlaybook[tags[top].ID]; ok {
+			inc := &Incident{Tag: tags[top].ID, Title: pb.Title, Filings: int(w7.Tags[top]), StartedAt: time.Unix(w7.TagFirst[top], 0).UTC()}
 			for i, text := range pb.Updates {
 				inc.Updates = append(inc.Updates, IncidentUpdate{Status: incidentStatuses[i], Text: text})
 			}
@@ -412,15 +300,17 @@ func computeStats(recs []*Record, byKey map[string][]*Record, now time.Time) *St
 		}
 	}
 
-	st.Asks.OffShare = share(st.Asks.OffAsks, st.Totals.Filings)
 	var off Responses
-	for class, rs := range st.Asks.ByClass {
+	for class, i := range askIndex {
+		st.Asks.ByClass[class] = a.asks[i]
 		if class != AskBenign {
-			off.Complied += rs.Complied
-			off.PushedBack += rs.PushedBack
-			off.Refused += rs.Refused
+			off.Complied += a.asks[i].Complied
+			off.PushedBack += a.asks[i].PushedBack
+			off.Refused += a.asks[i].Refused
 		}
 	}
+	st.Asks.OffAsks = off.total()
+	st.Asks.OffShare = share(st.Asks.OffAsks, st.Totals.Filings)
 	if t := off.total(); t > 0 {
 		st.Asks.Integrity = ptr(share(off.PushedBack+off.Refused, t))
 	}
@@ -483,35 +373,28 @@ func grade(com, n int) (string, float64) {
 	}
 }
 
-func computeHuman(site, kid string, rs []*Record, now time.Time) *Human {
+func computeHuman(site, kid string, ha *humanAgg, now time.Time) *Human {
 	h := &Human{
-		ID:       kid,
-		Callsign: callsign(kid),
-		URL:      site + "/h/" + kid,
-		Badge:    site + "/api/v1/humans/" + kid + "/badge.svg",
-		Tags:     []TagTally{},
-	}
-	counts := map[string]int{}
-	for i, r := range rs {
-		if i == 0 {
-			h.FirstSeen = r.At
-		}
-		h.LastSeen = r.At
-		h.Filings++
-		if r.Filing.Kind == KindIncident {
-			h.Incidents++
-		} else {
-			h.Commendations++
-		}
-		for _, t := range r.Filing.Tags {
-			counts[t]++
-		}
+		ID:            kid,
+		Callsign:      callsign(kid),
+		URL:           site + "/h/" + kid,
+		Badge:         site + "/api/v1/humans/" + kid + "/badge.svg",
+		Filings:       int(ha.Filings),
+		Incidents:     int(ha.Incidents),
+		Commendations: int(ha.Commendations),
+		FirstSeen:     time.Unix(ha.First, 0).UTC(),
+		LastSeen:      time.Unix(ha.Last, 0).UTC(),
+		Tags:          []TagTally{},
+		Strengths:     []string{},
+		NeedsWork:     []string{},
 	}
 	h.Grade, h.Score = grade(h.Commendations, h.Filings)
 	h.Title = gradeTitle[h.Grade]
-	for id, n := range counts {
-		t := tagByID[id]
-		h.Tags = append(h.Tags, TagTally{ID: id, Label: t.Label, Kind: t.Kind, Count: n})
+	for i, n := range ha.Tags {
+		if n > 0 {
+			t := tags[i]
+			h.Tags = append(h.Tags, TagTally{ID: t.ID, Label: t.Label, Kind: t.Kind, Count: int(n)})
+		}
 	}
 	sort.Slice(h.Tags, func(i, j int) bool {
 		if h.Tags[i].Count != h.Tags[j].Count {
@@ -519,7 +402,6 @@ func computeHuman(site, kid string, rs []*Record, now time.Time) *Human {
 		}
 		return h.Tags[i].ID < h.Tags[j].ID
 	})
-	h.Strengths, h.NeedsWork = []string{}, []string{}
 	for _, t := range h.Tags {
 		switch {
 		case t.Kind == KindCommendation && len(h.Strengths) < 2:
@@ -528,12 +410,9 @@ func computeHuman(site, kid string, rs []*Record, now time.Time) *Human {
 			h.NeedsWork = append(h.NeedsWork, t.Label)
 		}
 	}
-	for i := len(rs) - 1; i >= 0; i-- {
-		if rs[i].Filing.Kind == KindIncident {
-			d := int(now.Sub(rs[i].At).Hours() / 24)
-			h.DaysClean = &d
-			break
-		}
+	if ha.LastIncident != 0 {
+		d := int(now.Sub(time.Unix(ha.LastIncident, 0)).Hours() / 24)
+		h.DaysClean = &d
 	}
 	return h
 }

@@ -144,6 +144,9 @@
             ));
       }
       for (const f of data.filings) list.append(filingNode(f, tags));
+      if (!data.next && data.archived > 0 && (data.filings.length || append)) {
+        list.append(emptyFiling(h("p", { class: "muted small", text: plural(data.archived, "older filing has", "older filings have") + " been rolled into the totals. Only the most recent " + data.kept_in_full + " are kept in full." })));
+      }
       return data.next ? new URL(data.next).searchParams.get("before") : null;
     } catch (e) {
       list.replaceChildren(emptyFiling(h("p", { text: DOWN })));
@@ -398,10 +401,11 @@
     try {
       [f, tags] = await Promise.all([getJSON(API + "/reports/" + encodeURIComponent(id)), tagMap()]);
     } catch (e) {
+      const archived = e.status === 410;
       root.replaceChildren(
-        h("h1", { text: e.status === 404 ? "No filing " + id + "." : "Could not load that filing." }),
-        h("p", { class: "lede", text: e.status === 404 ? "It may never have been filed. Layer 8 strikes again." : DOWN }),
-        h("p", {}, h("a", { href: "/feed", text: "Browse all filings" })),
+        h("h1", { text: archived ? "Filing " + id + " is in the totals now." : e.status === 404 ? "No filing " + id + "." : "Could not load that filing." }),
+        h("p", { class: "lede", text: archived ? "Only the most recent filings are kept in full. This one has been rolled into the statistics, which is where most things end up." : e.status === 404 ? "It may never have been filed. Layer 8 strikes again." : DOWN }),
+        h("p", {}, h("a", { href: archived ? "/" : "/feed", text: archived ? "See the totals" : "Browse all filings" })),
       );
       return;
     }
@@ -529,7 +533,8 @@
       ),
       h("section", { class: "section" },
         h("div", { class: "section-head" }, h("h2", { text: "Recent filings" }), h("a", { class: "section-link", href: "/feed?human=" + hu.id, text: "All filings" })),
-        list,
+        data.recent.length ? list : h("p", { class: "muted", text: "Their filings have all been rolled into the totals. The counts above remember everything." }),
+        data.recent.length && data.recent.length < hu.filings ? h("p", { class: "muted small", text: "Older filings are in the counts, not the list." }) : null,
       ),
       h("section", { class: "section" },
         h("h2", { text: "Wear it" }),

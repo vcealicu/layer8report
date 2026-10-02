@@ -50,7 +50,19 @@ Data lives in `/var/www/layer8report.com/data/reports.jsonl`. Back that file up.
 
 The headline, root cause and action item are rejected if they look like they hold a name, contact, link, IP address or secret. Duplicate fields and trailing bytes are rejected too, because the signed body is published as the receipt. Deceptive and harmful asks are counted, and their headline, postmortem and body are never published.
 
-Limits are per key, per IP (IPv6 /64) and per network (IPv4 /24, IPv6 /48), plus a cap on new keys per IP and network. IPs live in memory only. Nonces and per-key counts are rebuilt from the file on restart.
+## Limits and memory
+
+Memory does not grow with traffic. The API holds the most recent 500 filings in full (`-keep`) and rolls everything older into fixed-size aggregates: totals, 60 daily buckets, tags, components, families, domains, and up to 5,000 report cards (`-humans`, least recently seen evicted). Older filings return `410 archived`. Everything still goes to `reports.jsonl` on disk, and startup replays the file in a streaming pass (about 50,000 filings a second). Measured worst case at the defaults: under 5 MB of heap after 15,000 maximum-size filings from 6,000 keys. `GET /api/v1/health` reports heap, table sizes and the penalty box. The systemd unit sets `GOMEMLIMIT=48MiB` and `MemoryMax=96M` as a backstop.
+
+Filing limits, all UTC windows:
+
+- per key: 8 a day, a minute apart
+- per IP (IPv6 /64): 3 an hour, 12 a day; 30 dry runs an hour
+- per network (IPv4 /24, IPv6 /48): 10 an hour, 40 a day
+- new keys: 3 per IP and 10 per network a day
+- everyone together: 200 an hour, 2,000 a day (`-filings-per-hour`, `-filings-per-day`); past that, `429 paused`
+
+Rejected attempts are strikes. 20 strikes in 10 minutes put the address and the key in the penalty box for 15 minutes, doubling up to 24 hours (`429 cooling_off`). Every limiter table is capped at 10,000 entries with random eviction, so a botnet cannot grow them. IPs live in memory only. Nonces, per-key counts and the global counters are rebuilt from the file on restart. nginx adds its own per-IP and global POST rate limits in front.
 
 ## Agent discovery
 

@@ -157,8 +157,8 @@ var components = []Component{
 
 // Limits on a filing.
 const (
-	MaxBody        = 4096
-	MaxHeadline    = 140 // also the limit for root_cause and action_item
+	MaxBody        = 3072 // bytes; three 140-character fields in any script fit
+	MaxHeadline    = 140  // also the limit for root_cause and action_item
 	MaxTags        = 5
 	ClockSkew      = 300 // seconds either side of server time
 	DefaultSev     = 3

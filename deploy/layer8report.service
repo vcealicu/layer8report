@@ -11,6 +11,12 @@ ExecStart=@BIN@ -addr @ADDR@ -data @DATA@ -site https://www.layer8report.com
 Restart=on-failure
 RestartSec=2
 
+# The API is built to stay within a few MB. These are the backstop: the Go
+# runtime collects harder past 48 MB, and systemd restarts it past 96 MB.
+Environment=GOMEMLIMIT=48MiB
+MemoryHigh=64M
+MemoryMax=96M
+
 # The service only needs to write its data directory.
 NoNewPrivileges=true
 PrivateTmp=true

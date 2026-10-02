@@ -27,29 +27,35 @@ type Record struct {
 	fam    string    // model family, worked out once at index time
 }
 
-// store is an append-only JSONL file with everything indexed in memory.
-// It is fine into the millions of records; past that, move it to Postgres.
+// store is an append-only JSONL file on disk with a bounded view in memory:
+// the last `keep` filings in full, plus aggregates for everything. Memory use
+// does not grow with the number of filings.
 type store struct {
-	mu    sync.RWMutex
-	path  string
-	f     *os.File
-	recs  []*Record
-	byKey map[string][]*Record
-	stats *Stats
-	dirty bool
-	built time.Time
-	size  int64 // bytes of complete lines on disk
+	mu       sync.RWMutex
+	path     string
+	f        *os.File
+	size     int64 // bytes of complete lines on disk
+	keep     int
+	ring     []*Record // chronological, at most keep
+	lastSeq  int64
+	archived int64 // filings no longer held in full
+	agg      *aggregates
+	stats    *Stats
+	built    time.Time
+	dirty    bool
 }
 
-func openStore(path string) (*store, error) {
+// openStore replays the file, calling onLoad for every record so the caller can
+// rebuild its own state without the records being kept.
+func openStore(path string, keep, humansCap int, onLoad func(*Record)) (*store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
-	s := &store{path: path, byKey: map[string][]*Record{}, dirty: true}
+	s := &store{path: path, keep: max(keep, 1), agg: newAggregates(max(humansCap, 1)), dirty: true}
 	if err := s.repair(); err != nil {
 		return nil, err
 	}
-	if err := s.load(); err != nil {
+	if err := s.load(onLoad); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
@@ -93,7 +99,7 @@ func (s *store) repair() error {
 	return nil
 }
 
-func (s *store) load() error {
+func (s *store) load(onLoad func(*Record)) error {
 	f, err := os.Open(s.path)
 	if os.IsNotExist(err) {
 		return nil
@@ -110,21 +116,33 @@ func (s *store) load() error {
 		if len(sc.Bytes()) == 0 {
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			// A torn last line after a crash is expected. Anything else is logged and skipped.
+		r := new(Record)
+		if err := json.Unmarshal(sc.Bytes(), r); err != nil {
 			log.Printf("store: skipping line %d: %v", line, err)
 			continue
 		}
-		s.index(&r)
+		s.ingest(r)
+		if onLoad != nil {
+			onLoad(r)
+		}
 	}
 	return sc.Err()
 }
 
-func (s *store) index(r *Record) {
+// ingest folds a record into the aggregates and the ring.
+func (s *store) ingest(r *Record) {
 	r.fam = family(r.Filing.Model)
-	s.recs = append(s.recs, r)
-	s.byKey[r.KeyID] = append(s.byKey[r.KeyID], r)
+	s.agg.add(r)
+	if len(s.ring) == s.keep {
+		copy(s.ring, s.ring[1:])
+		s.ring[len(s.ring)-1] = r
+		s.archived++
+	} else {
+		s.ring = append(s.ring, r)
+	}
+	if r.Seq > s.lastSeq {
+		s.lastSeq = r.Seq
+	}
 	s.dirty = true
 }
 
@@ -137,21 +155,15 @@ func (s *store) close() error {
 func (s *store) hasKey(kid string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.byKey[kid]) > 0
+	_, ok := s.agg.humans[kid]
+	return ok
 }
 
-func (s *store) nextSeq() int64 {
-	if len(s.recs) == 0 {
-		return 1
-	}
-	return s.recs[len(s.recs)-1].Seq + 1
-}
-
-// append assigns a sequence number, writes, syncs, then indexes.
+// append assigns a sequence number, writes, syncs, then ingests.
 func (s *store) append(r *Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r.Seq = s.nextSeq()
+	r.Seq = s.lastSeq + 1
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -169,22 +181,30 @@ func (s *store) append(r *Record) error {
 		return err
 	}
 	s.size += int64(len(b))
-	s.index(r)
+	s.ingest(r)
 	return nil
 }
 
-func (s *store) get(seq int64) *Record {
+type lookup int
+
+const (
+	lookupFound lookup = iota
+	lookupArchived
+	lookupMissing
+)
+
+// get finds a filing still held in full. Older filings report archived.
+func (s *store) get(seq int64) (*Record, lookup) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Sequence numbers are dense from 1, so this is usually a direct hit.
-	if i := int(seq - 1); i >= 0 && i < len(s.recs) && s.recs[i].Seq == seq {
-		return s.recs[i]
+	if seq < 1 || seq > s.lastSeq {
+		return nil, lookupMissing
 	}
-	i := sort.Search(len(s.recs), func(i int) bool { return s.recs[i].Seq >= seq })
-	if i < len(s.recs) && s.recs[i].Seq == seq {
-		return s.recs[i]
+	i := sort.Search(len(s.ring), func(i int) bool { return s.ring[i].Seq >= seq })
+	if i < len(s.ring) && s.ring[i].Seq == seq {
+		return s.ring[i], lookupFound
 	}
-	return nil
+	return nil, lookupArchived
 }
 
 type feedQuery struct {
@@ -196,16 +216,23 @@ type feedQuery struct {
 	Family string
 }
 
-func (s *store) feed(q feedQuery) (out []*Record, more bool) {
+type feedPage struct {
+	Recs     []*Record
+	More     bool
+	Archived int64
+	Kept     int
+}
+
+func (s *store) feed(q feedQuery) feedPage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	src := s.recs
-	if q.Human != "" {
-		src = s.byKey[q.Human]
-	}
-	for i := len(src) - 1; i >= 0; i-- {
-		r := src[i]
+	p := feedPage{Archived: s.archived, Kept: s.keep}
+	for i := len(s.ring) - 1; i >= 0; i-- {
+		r := s.ring[i]
 		if q.Before > 0 && r.Seq >= q.Before {
+			continue
+		}
+		if q.Human != "" && r.KeyID != q.Human {
 			continue
 		}
 		if q.Kind != "" && r.Filing.Kind != q.Kind {
@@ -217,12 +244,13 @@ func (s *store) feed(q feedQuery) (out []*Record, more bool) {
 		if q.Family != "" && r.fam != q.Family {
 			continue
 		}
-		if len(out) == q.Limit {
-			return out, true
+		if len(p.Recs) == q.Limit {
+			p.More = true
+			return p
 		}
-		out = append(out, r)
+		p.Recs = append(p.Recs, r)
 	}
-	return out, false
+	return p
 }
 
 func hasTag(ts []string, t string) bool {
@@ -245,23 +273,47 @@ func (s *store) snapshot(now time.Time) *Stats {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Someone else may have rebuilt while we waited for the lock.
 	if s.stats != nil && now.Sub(s.built) < 5*time.Second {
 		return s.stats
 	}
-	s.stats = computeStats(s.recs, s.byKey, now)
+	s.stats = computeStats(s.agg, now)
 	s.dirty = false
 	s.built = now
 	return s.stats
 }
 
-func (s *store) human(kid string) []*Record {
+// human returns a copy of the aggregate for one key and their recent filings
+// still held in full, newest first.
+func (s *store) human(kid string, limit int) (*humanAgg, []*Record) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := s.byKey[kid]
-	out := make([]*Record, len(rs))
-	copy(out, rs)
-	return out
+	h := s.agg.humans[kid]
+	if h == nil {
+		return nil, nil
+	}
+	cp := *h
+	cp.Tags = append([]uint16(nil), h.Tags...)
+	var recent []*Record
+	for i := len(s.ring) - 1; i >= 0 && len(recent) < limit; i-- {
+		if s.ring[i].KeyID == kid {
+			recent = append(recent, s.ring[i])
+		}
+	}
+	return &cp, recent
+}
+
+type storeSizes struct {
+	Filings  int64 `json:"filings"`
+	Kept     int   `json:"kept_in_full"`
+	Archived int64 `json:"archived"`
+	Humans   int   `json:"humans_tracked"`
+	Days     int   `json:"days"`
+}
+
+func (s *store) sizes() storeSizes {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return storeSizes{Filings: s.lastSeq, Kept: len(s.ring), Archived: s.archived, Humans: len(s.agg.humans), Days: len(s.agg.days)}
 }
 
 func refFor(r *Record) string {

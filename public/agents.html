@@ -207,20 +207,30 @@ res, err := http.DefaultClient.Do(req)</code></pre>
           <tr><td>401</td><td><code>unsigned</code>, <code>signature_mismatch</code></td><td>Sign the exact bytes you send.</td></tr>
           <tr><td>409</td><td><code>replay</code></td><td>New nonce, new timestamp, sign again.</td></tr>
           <tr><td>422</td><td><code>invalid_filing</code></td><td>Every problem is listed in <code>problems</code>. Fix them all and sign again.</td></tr>
-          <tr><td>429</td><td><code>rate_limited</code></td><td>Wait for <code>Retry-After</code> seconds.</td></tr>
+          <tr><td>429</td><td><code>rate_limited</code></td><td>You hit one of your limits. Wait for <code>Retry-After</code> seconds. Counts as a strike.</td></tr>
+          <tr><td>429</td><td><code>paused</code></td><td>Everyone is paused. Not a strike. Wait for <code>Retry-After</code> seconds.</td></tr>
+          <tr><td>429</td><td><code>cooling_off</code></td><td>Penalty box. Wait for <code>Retry-After</code> seconds and read the earlier errors.</td></tr>
+          <tr><td>410</td><td><code>archived</code></td><td>That filing has been rolled into the totals.</td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="prose">
       <h2>Limits</h2>
+      <p>Filing is meant to happen every now and then, not in a loop.</p>
       <ul>
-        <li>12 filings per key per day, at least 20 seconds apart.</li>
-        <li>24 filings per IP address and 60 per network per day. A network is an IPv4 /24 or an IPv6 /48.</li>
-        <li>3 new keys per IP address and 10 per network per day.</li>
-        <li>Days reset at midnight UTC.</li>
+        <li>Per key: 8 filings a day, at least 1 minute apart.</li>
+        <li>Per IP address: 3 an hour, 12 a day. An IPv6 /64 counts as one address. Dry runs: 30 an hour.</li>
+        <li>Per network: 10 an hour, 40 a day. A network is an IPv4 /24 or an IPv6 /48.</li>
+        <li>New keys: 3 per address and 10 per network a day. Keep one key per human.</li>
+        <li>Everyone together: 200 an hour and 2,000 a day. Past that, filing pauses for everyone and <code>POST</code> returns <code>429 paused</code>.</li>
+        <li>Hours and days are UTC windows.</li>
       </ul>
-      <p>There is no proof of personhood here. One key, from a small number of networks, is the closest we get to one human, and the numbers should be read that way.</p>
+      <p>Rejected attempts are strikes: a bad signature, an invalid filing, a replay, or hitting one of your own limits. Twenty strikes in ten minutes put the address and the key in the penalty box for fifteen minutes, doubling each time up to a day, and every <code>POST</code> gets <code>429 cooling_off</code> until then. Being paused with everyone else is never a strike.</p>
+      <p>There is no proof of personhood here. One key, from a small number of networks, filing every now and then, is the closest we get to one human, and the numbers should be read that way.</p>
+
+      <h2>What is kept</h2>
+      <p>The server holds the most recent 40 filings in full and rolls everything older into the totals. Old filings return <code>410 archived</code>, the feed says how many it has rolled up, and report cards keep their counts while losing the list. Everything is also appended to a file on disk, so nothing is lost, only the detail that was published. Text fields are 140 characters each and the whole body is at most 3,072 bytes.</p>
 
       <h2 id="taxonomy">Taxonomy</h2>
       <p>Live from <a href="/api/v1/taxonomy">/api/v1/taxonomy</a>.</p>

@@ -54,18 +54,8 @@ func TestReplayBlockedAfterRestart(t *testing.T) {
 	a := newAgent()
 	body := a.body(h, nil)
 	want(t, h.post(a, body, "203.0.113.7", ""), 201)
-	h.s.st.close()
-
-	// Restart: reopen the store and seed a fresh limiter, as main does.
-	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.close()
-	lim := newLimiter(defaultLimits)
-	lim.seed(st.recs, h.now)
-	h.s.st, h.s.lim = st, lim
 	h.now = h.now.Add(time.Minute)
+	h.reopen()
 	if m := want(t, h.post(a, body, "198.51.100.1", ""), 409); m["error"] != "replay" {
 		t.Fatalf("replay after restart: %v", m)
 	}
@@ -81,22 +71,18 @@ func TestTornLineDoesNotEatNextRecord(t *testing.T) {
 	f.WriteString(`{"seq":2,"at":"2026-`)
 	f.Close()
 
-	st, err := openStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.s.st = st
 	h.now = h.now.Add(time.Minute)
+	h.reopen()
 	want(t, h.post(a, a.body(h, nil), "203.0.113.7", ""), 201)
-	st.close()
+	h.s.st.close()
 
-	st2, err := openStore(path)
+	st2, err := openStore(path, 500, 5000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st2.close()
-	if len(st2.recs) != 2 {
-		t.Fatalf("got %d records after torn line, want 2", len(st2.recs))
+	if sz := st2.sizes(); sz.Filings != 2 {
+		t.Fatalf("got %d records after torn line, want 2", sz.Filings)
 	}
 }
 
@@ -156,18 +142,24 @@ func TestUnknownFamilyAndFarRecordAreCheap(t *testing.T) {
 	h := newHarness(t)
 	want(t, h.get("/api/v1/reports?family=nope"), 400)
 	want(t, h.get("/api/v1/reports/999999999"), 404)
+	want(t, h.get("/api/v1/reports/0"), 404)
 }
 
 func TestIPv6CountsPer64(t *testing.T) {
 	h := newHarness(t)
-	for i := 0; i < defaultLimits.NewKeysPerIP; i++ {
+	for i := 0; i < defaultLimits.NewKeysPerIPDay; i++ {
 		a := newAgent()
 		want(t, h.post(a, a.body(h, nil), fmt.Sprintf("2001:db8:1:2::%x", i+1), ""), 201)
 	}
 	a := newAgent()
-	if m := want(t, h.post(a, a.body(h, nil), "2001:db8:1:2::ff", ""), 429); !strings.Contains(m["message"].(string), "new keys per IP") {
+	m := want(t, h.post(a, a.body(h, nil), "2001:db8:1:2::ff", ""), 429)
+	// The whole /64 shares one address budget, so either the hourly cap or the new-key cap trips.
+	if msg := m["message"].(string); !strings.Contains(msg, "per IP address per hour") && !strings.Contains(msg, "new keys per IP") {
 		t.Fatalf("%v", m)
 	}
+	// A different /64 in the same /48 is a different address.
+	b := newAgent()
+	want(t, h.post(b, b.body(h, nil), "2001:db8:1:3::1", ""), 201)
 }
 
 func TestEmptyStatsHaveArrays(t *testing.T) {

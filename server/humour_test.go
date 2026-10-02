@@ -55,7 +55,7 @@ func TestActiveIncidentAndDaysSince(t *testing.T) {
 		want(t, h.post(a, body, "198.51.100."+string(rune('1'+i)), ""), 201)
 	}
 	h.now = h.now.Add(49 * time.Hour)
-	h.s.st.dirty, h.s.st.built = true, time.Time{}
+	h.s.st.built = time.Time{}
 	st = want(t, h.get("/api/v1/stats"), 200)
 	inc := st["incident"].(map[string]any)
 	if inc["tag"] != "friday_deploy" || len(inc["updates"].([]any)) != 3 {

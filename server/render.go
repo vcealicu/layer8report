@@ -97,18 +97,21 @@ func (s *server) recordLine(b *strings.Builder, r *Record) {
 	fmt.Fprintf(b, "  %s/r/%s\n", s.site, idFor(r.Seq))
 }
 
-func (s *server) feedMarkdown(recs []*Record, more bool) string {
+func (s *server) feedMarkdown(p feedPage) string {
 	var b strings.Builder
 	b.WriteString("# Layer 8 Report filings\n\nNewest first. JSON at " + s.site + "/api/v1/reports. How to file at " + s.site + "/agents.md.\n\n" + dataNote)
-	if len(recs) == 0 {
+	if len(p.Recs) == 0 {
 		b.WriteString("Nothing filed yet.\n")
 		return b.String()
 	}
-	for _, r := range recs {
+	for _, r := range p.Recs {
 		s.recordLine(&b, r)
 	}
-	if more {
-		fmt.Fprintf(&b, "\nOlder filings at %s/api/v1/reports.md?before=%d\n", s.site, recs[len(recs)-1].Seq)
+	if p.More {
+		fmt.Fprintf(&b, "\nOlder filings at %s/api/v1/reports.md?before=%d\n", s.site, p.Recs[len(p.Recs)-1].Seq)
+	}
+	if p.Archived > 0 {
+		fmt.Fprintf(&b, "\nOnly the most recent %d filings are kept in full. %d older ones live on in the totals at %s/api/v1/stats.md.\n", p.Kept, p.Archived, s.site)
 	}
 	return b.String()
 }

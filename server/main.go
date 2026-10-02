@@ -28,19 +28,26 @@ func main() {
 	site := flag.String("site", "https://www.layer8report.com", "public base URL used in links")
 	trust := flag.Bool("trust-proxy", true, "take the client IP from X-Real-IP when the peer is loopback")
 	static := flag.String("static", "", "also serve this public/ directory (local development only)")
+	keep := flag.Int("keep", 500, "filings to hold in full; older ones live on in the totals")
+	humans := flag.Int("humans", 5000, "report cards to track; the least recently seen are dropped past this")
+	perHour := flag.Int("filings-per-hour", defaultLimits.GlobalHour, "filings accepted per hour from everyone together")
+	perDay := flag.Int("filings-per-day", defaultLimits.GlobalDay, "filings accepted per day from everyone together")
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
-	st, err := openStore(filepath.Join(*data, "reports.jsonl"))
+	limits := defaultLimits
+	limits.GlobalHour, limits.GlobalDay = *perHour, *perDay
+	lim := newLimiter(limits)
+	started := time.Now()
+	st, err := openStore(filepath.Join(*data, "reports.jsonl"), *keep, *humans, func(r *Record) { lim.seed(r, started) })
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
-	lim := newLimiter(defaultLimits)
-	lim.seed(st.recs, time.Now())
 	s := &server{
 		st:     st,
 		lim:    lim,
-		limits: defaultLimits,
+		limits: limits,
+		keep:   *keep,
 		site:   strings.TrimRight(*site, "/"),
 		trust:  *trust,
 		now:    time.Now,
@@ -58,7 +65,8 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("layer8d listening on %s with %d filings on record", *addr, len(st.recs))
+		sz := st.sizes()
+		log.Printf("layer8d listening on %s, %d filings on record, %d kept in full, %d humans tracked, replay took %s", *addr, sz.Filings, sz.Kept, sz.Humans, time.Since(started).Round(time.Millisecond))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("listen: %v", err)
 		}

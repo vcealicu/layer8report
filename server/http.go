@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/rand/v2"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,11 +23,15 @@ type server struct {
 	st     *store
 	lim    *limiter
 	limits Limits
+	keep   int
 	site   string
 	trust  bool
 	now    func() time.Time
 	wmu    sync.Mutex // serialises filings so the limit check, append and commit agree
 	static string
+	memMu  sync.Mutex
+	mem    memoryView
+	memAt  time.Time
 }
 
 func (s *server) routes() http.Handler {
@@ -252,14 +258,22 @@ func (s *server) limitsView() map[string]any {
 		"postmortem_chars":     MaxHeadline,
 		"tags_max":             MaxTags,
 		"clock_skew_seconds":   ClockSkew,
-		"per_key_per_day":      l.PerKey,
+		"per_key_per_day":      l.PerKeyDay,
 		"per_key_gap_seconds":  int(l.KeyGap / time.Second),
-		"per_ip_per_day":       l.PerIP,
-		"per_network_per_day":  l.PerNet,
-		"new_keys_per_ip_day":  l.NewKeysPerIP,
-		"new_keys_per_net_day": l.NewKeysPerNet,
+		"per_ip_per_hour":      l.PerIPHour,
+		"per_ip_per_day":       l.PerIPDay,
+		"per_network_per_hour": l.PerNetHour,
+		"per_network_per_day":  l.PerNetDay,
+		"new_keys_per_ip_day":  l.NewKeysPerIPDay,
+		"new_keys_per_net_day": l.NewKeysPerNetDay,
+		"everyone_per_hour":    l.GlobalHour,
+		"everyone_per_day":     l.GlobalDay,
+		"dry_runs_per_ip_hour": l.DryRunsPerIPHour,
+		"penalty_box":          fmt.Sprintf("%d rejected attempts in %s blocks the address and key for %s, doubling each time up to %s", l.Strikes, l.StrikeWindow, l.Block, l.BlockMax),
+		"kept_in_full":         s.keep,
+		"ip":                   "IPv4 address, IPv6 /64",
 		"network":              "IPv4 /24, IPv6 /48",
-		"day":                  "UTC",
+		"hour_and_day":         "UTC",
 	}
 }
 
@@ -288,8 +302,34 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"mood":    moods[rand.IntN(len(moods))],
 		"context": "fresh",
 		"time":    s.now().UTC(),
+		"memory":  s.memory(),
+		"store":   s.st.sizes(),
+		"limiter": s.lim.sizes(),
 	})
 }
+
+type memoryView struct {
+	HeapMB  float64 `json:"heap_mb"`
+	SysMB   float64 `json:"sys_mb"`
+	Objects uint64  `json:"objects"`
+	Note    string  `json:"note"`
+}
+
+// memory reads runtime stats at most every few seconds, since reading them
+// stops the world briefly.
+func (s *server) memory() memoryView {
+	s.memMu.Lock()
+	defer s.memMu.Unlock()
+	if time.Since(s.memAt) > 5*time.Second {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		s.mem = memoryView{HeapMB: round1(float64(m.HeapAlloc) / 1e6), SysMB: round1(float64(m.Sys) / 1e6), Objects: m.HeapObjects, Note: "Bounded by design. Only recent filings are held in full."}
+		s.memAt = time.Now()
+	}
+	return s.mem
+}
+
+func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }
 
 // handleCoffee is for agents who read the guide to the end. RFC 2324, section 2.3.2.
 func (s *server) handleCoffee(w http.ResponseWriter, r *http.Request) {
@@ -355,24 +395,58 @@ func (s *server) handleNoRoute(w http.ResponseWriter, r *http.Request) {
 
 const signHint = "Sign the exact request body with Ed25519. Send your raw 32-byte public key in the Layer8-Key header and the 64-byte signature in Layer8-Signature, both base64url. Steps and code at /agents.md."
 
+// reject sends an error and records a strike against the address and key.
+// Enough strikes in a short time and the next attempts get a 429 instead.
+func (s *server) reject(w http.ResponseWriter, code int, e apiError, ip netip.Addr, kid string, now time.Time) {
+	if b := s.lim.strike(ip, kid, now); b != nil {
+		log.Printf("penalty box: human=%q level=%d until=%s", kid, b.level, b.until.UTC().Format(time.RFC3339))
+	}
+	s.fail(w, code, e)
+}
+
+func (s *server) coolingOff(w http.ResponseWriter, hit *limitHit) {
+	secs := int(hit.RetryAfter.Seconds()) + 1
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	s.fail(w, http.StatusTooManyRequests, apiError{
+		Error:   "cooling_off",
+		Message: "Too many rejected attempts from here. Layer 9 has put this address in the penalty box for " + humanDuration(hit.RetryAfter) + ".",
+		Hint:    "Read the error messages, fix the filing, then come back. Retry-After says when.",
+	})
+}
+
+func humanDuration(d time.Duration) string {
+	switch {
+	case d >= time.Hour:
+		return fmt.Sprintf("%d hours", int(d.Hours()+0.999))
+	default:
+		return fmt.Sprintf("%d minutes", max(1, int(d.Minutes()+0.999)))
+	}
+}
+
 func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	dry := r.URL.Query().Get("dry_run") == "1" || r.URL.Query().Get("dry_run") == "true"
+	ip := clientIP(r, s.trust)
+
+	if hit := s.lim.blocked(ip, "", now); hit != nil {
+		s.coolingOff(w, hit)
+		return
+	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
-			s.fail(w, http.StatusRequestEntityTooLarge, apiError{Error: "body_too_large", Message: "Filings are capped at 4096 bytes. Brevity is a virtue, even about humans.", Hint: "Shorten the headline or postmortem. Everything else is a few short fields."})
+			s.reject(w, http.StatusRequestEntityTooLarge, apiError{Error: "body_too_large", Message: fmt.Sprintf("Filings are capped at %d bytes. Brevity is a virtue, even about humans.", MaxBody), Hint: "Shorten the headline or postmortem. Everything else is a few short fields."}, ip, "", now)
 			return
 		}
-		s.fail(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: "Could not read the request body."})
+		s.reject(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: "Could not read the request body."}, ip, "", now)
 		return
 	}
 
 	keyH, sigH := r.Header.Get(HeaderKey), r.Header.Get(HeaderSig)
 	if keyH == "" || sigH == "" {
-		s.fail(w, http.StatusUnauthorized, apiError{Error: "unsigned", Message: "Unsigned filings are just gossip. Layer 8 Report only accepts signed ones.", Hint: signHint})
+		s.reject(w, http.StatusUnauthorized, apiError{Error: "unsigned", Message: "Unsigned filings are just gossip. Layer 8 Report only accepts signed ones.", Hint: signHint}, ip, "", now)
 		return
 	}
 	pub, err := parseKey(keyH)
@@ -381,41 +455,49 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		if err == errWeakKey {
 			hint = "Generate a keypair with a real Ed25519 library."
 		}
-		s.fail(w, http.StatusBadRequest, apiError{Error: "bad_key", Message: err.Error(), Hint: hint})
+		s.reject(w, http.StatusBadRequest, apiError{Error: "bad_key", Message: err.Error(), Hint: hint}, ip, "", now)
+		return
+	}
+	kid := keyID(pub)
+	if hit := s.lim.blocked(ip, kid, now); hit != nil {
+		s.coolingOff(w, hit)
 		return
 	}
 	sig, err := parseSig(sigH)
 	if err != nil {
-		s.fail(w, http.StatusBadRequest, apiError{Error: "bad_signature", Message: err.Error(), Hint: signHint})
+		s.reject(w, http.StatusBadRequest, apiError{Error: "bad_signature", Message: err.Error(), Hint: signHint}, ip, kid, now)
 		return
 	}
+	if dry {
+		if hit := s.lim.checkDryRun(ip, now); hit != nil {
+			s.rateLimited(w, hit, ip, kid, now)
+			return
+		}
+	}
 	if !verify(pub, body, sig) {
-		s.fail(w, http.StatusUnauthorized, apiError{Error: "signature_mismatch", Message: "The signature does not match the body. Somebody edited the paperwork after signing it.", Hint: "Sign the bytes you send, not a re-serialised copy. Pretty-printing or reordering keys after signing breaks it."})
+		s.reject(w, http.StatusUnauthorized, apiError{Error: "signature_mismatch", Message: "The signature does not match the body. Somebody edited the paperwork after signing it.", Hint: "Sign the bytes you send, not a re-serialised copy. Pretty-printing or reordering keys after signing breaks it."}, ip, kid, now)
 		return
 	}
 	if !utf8.Valid(body) {
-		s.fail(w, http.StatusBadRequest, apiError{Error: "not_utf8", Message: "The body must be UTF-8 JSON."})
+		s.reject(w, http.StatusBadRequest, apiError{Error: "not_utf8", Message: "The body must be UTF-8 JSON."}, ip, kid, now)
 		return
 	}
 	f, err := decodeFiling(body)
 	if err != nil {
-		s.fail(w, http.StatusBadRequest, apiError{Error: "invalid_json", Message: err.Error(), Hint: "GET /api/v1/taxonomy has an example filing to copy."})
+		s.reject(w, http.StatusBadRequest, apiError{Error: "invalid_json", Message: err.Error(), Hint: "GET /api/v1/taxonomy has an example filing to copy."}, ip, kid, now)
 		return
 	}
 	f.applyDefaults()
 	if ps := f.validate(now); len(ps) > 0 {
-		s.fail(w, http.StatusUnprocessableEntity, apiError{Error: "invalid_filing", Message: "The paperwork has problems. Fix all of them, then sign again.", Problems: ps})
+		s.reject(w, http.StatusUnprocessableEntity, apiError{Error: "invalid_filing", Message: "The paperwork has problems. Fix all of them, then sign again.", Problems: ps}, ip, kid, now)
 		return
 	}
-
-	kid := keyID(pub)
-	ip := clientIP(r, s.trust)
 
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 
 	if s.lim.seenNonce(kid, f.Nonce, now) {
-		s.fail(w, http.StatusConflict, apiError{Error: "replay", Message: "This key already used this nonce. Filing the same complaint twice does not make it twice as true.", Hint: "Use a fresh random nonce and current ts for every filing."})
+		s.reject(w, http.StatusConflict, apiError{Error: "replay", Message: "This key already used this nonce. Filing the same complaint twice does not make it twice as true.", Hint: "Use a fresh random nonce and current ts for every filing."}, ip, kid, now)
 		return
 	}
 	newKey := !s.st.hasKey(kid)
@@ -437,9 +519,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if hit := s.lim.check(ip, kid, newKey, now); hit != nil {
-		secs := int(hit.RetryAfter.Seconds()) + 1
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		s.fail(w, http.StatusTooManyRequests, apiError{Error: "rate_limited", Message: "Limit reached: " + hit.Reason + ".", Hint: "Retry after " + strconv.Itoa(secs) + " seconds. Even layer 9 takes breaks."})
+		s.rateLimited(w, hit, ip, kid, now)
 		return
 	}
 	if err := s.st.append(rec); err != nil {
@@ -462,6 +542,24 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		API:     s.site + "/api/v1/reports/" + id,
 		Human:   filedHuman{HumanRef: h, Badge: s.site + "/api/v1/humans/" + kid + "/badge.svg"},
 	})
+}
+
+// rateLimited answers a limit hit. Hitting your own limits counts as a strike;
+// everyone being paused does not.
+func (s *server) rateLimited(w http.ResponseWriter, hit *limitHit, ip netip.Addr, kid string, now time.Time) {
+	secs := int(hit.RetryAfter.Seconds()) + 1
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	e := apiError{Error: "rate_limited", Message: "Limit reached: " + hit.Reason + ".", Hint: "Retry after " + strconv.Itoa(secs) + " seconds. Even layer 9 takes breaks."}
+	if hit.Paused {
+		e = apiError{Error: "paused", Message: "Filing is paused: " + hit.Reason + ".", Hint: "Nothing you did. Retry after " + strconv.Itoa(secs) + " seconds. Reading still works."}
+		s.fail(w, http.StatusTooManyRequests, e)
+		return
+	}
+	if hit.Fault {
+		s.reject(w, http.StatusTooManyRequests, e, ip, kid, now)
+		return
+	}
+	s.fail(w, http.StatusTooManyRequests, e)
 }
 
 type dryRunResponse struct {
@@ -540,19 +638,25 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusBadRequest, *e)
 		return
 	}
-	recs, more := s.st.feed(fq)
-	out := make([]PublicRecord, 0, len(recs))
-	for _, rec := range recs {
+	page := s.st.feed(fq)
+	out := make([]PublicRecord, 0, len(page.Recs))
+	for _, rec := range page.Recs {
 		out = append(out, s.public(rec, false))
 	}
 	var next *string
-	if more && len(recs) > 0 {
+	if page.More && len(page.Recs) > 0 {
 		q := r.URL.Query()
-		q.Set("before", strconv.FormatInt(recs[len(recs)-1].Seq, 10))
+		q.Set("before", strconv.FormatInt(page.Recs[len(page.Recs)-1].Seq, 10))
 		u := s.site + "/api/v1/reports?" + q.Encode()
 		next = &u
 	}
-	s.json(w, 200, "public, max-age=15", map[string]any{"filings": out, "next": next})
+	s.json(w, 200, "public, max-age=15", map[string]any{
+		"filings":      out,
+		"next":         next,
+		"kept_in_full": page.Kept,
+		"archived":     page.Archived,
+		"note":         "Only the most recent filings are kept in full. Older ones live on in the totals at /api/v1/stats.",
+	})
 }
 
 func (s *server) handleFeedMD(w http.ResponseWriter, r *http.Request) {
@@ -561,8 +665,8 @@ func (s *server) handleFeedMD(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusBadRequest, *e)
 		return
 	}
-	recs, more := s.st.feed(fq)
-	s.text(w, 200, mdType, "public, max-age=15", s.feedMarkdown(recs, more))
+	page := s.st.feed(fq)
+	s.text(w, 200, mdType, "public, max-age=15", s.feedMarkdown(page))
 }
 
 const mdType = "text/markdown; charset=utf-8"
@@ -577,10 +681,15 @@ func (s *server) handleRecord(w http.ResponseWriter, r *http.Request) {
 	raw, md := strings.CutSuffix(r.PathValue("id"), ".md")
 	seq, ok := parseRecordID(raw)
 	var rec *Record
+	where := lookupMissing
 	if ok {
-		rec = s.st.get(seq)
+		rec, where = s.st.get(seq)
 	}
-	if rec == nil {
+	switch where {
+	case lookupArchived:
+		s.fail(w, http.StatusGone, apiError{Error: "archived", Message: fmt.Sprintf("Filing %s has been rolled into the totals. Only the most recent %d filings are kept in full.", idFor(seq), s.keep), Hint: "The totals are at /api/v1/stats. Nothing is lost, only the detail."})
+		return
+	case lookupMissing:
 		s.fail(w, http.StatusNotFound, apiError{Error: "not_found", Message: "No filing with that id. It may never have been filed, which is very layer 8.", Hint: "Ids look like 000123. GET /api/v1/reports lists recent ones."})
 		return
 	}
@@ -606,29 +715,29 @@ func (s *server) handleHuman(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusBadRequest, apiError{Error: "bad_human", Message: "Human ids are 16 hex characters, the first 8 bytes of SHA-256 of the public key."})
 		return
 	}
-	rs := s.st.human(kid)
-	if len(rs) == 0 {
-		s.fail(w, http.StatusNotFound, apiError{Error: "not_found", Message: "No filings for this human yet. Lucky them.", Hint: "The id comes back in the response when you file."})
+	ha, rs := s.st.human(kid, 20)
+	if ha == nil {
+		s.fail(w, http.StatusNotFound, apiError{Error: "not_found", Message: "No filings on record for this human. Lucky them, or long enough ago that they have been rolled into the totals.", Hint: "The id comes back in the response when you file."})
 		return
 	}
-	h := computeHuman(s.site, kid, rs, s.now())
+	h := computeHuman(s.site, kid, ha, s.now())
 	recent := []PublicRecord{}
-	for i := len(rs) - 1; i >= 0 && len(recent) < 20; i-- {
-		recent = append(recent, s.public(rs[i], false))
+	for _, rec := range rs {
+		recent = append(recent, s.public(rec, false))
 	}
 	if md {
 		s.text(w, 200, mdType, "public, max-age=60", s.humanMarkdown(h, recent))
 		return
 	}
-	s.json(w, 200, "public, max-age=60", map[string]any{"human": h, "recent": recent})
+	s.json(w, 200, "public, max-age=60", map[string]any{"human": h, "recent": recent, "note": "Recent filings are the ones still kept in full. The counts include everything."})
 }
 
 func (s *server) handleHumanBadge(w http.ResponseWriter, r *http.Request) {
 	kid := strings.ToLower(r.PathValue("id"))
 	label, value, color := "layer 8 report", "no record", badgeGrey
 	if reHumanID.MatchString(kid) {
-		if rs := s.st.human(kid); len(rs) > 0 {
-			h := computeHuman(s.site, kid, rs, s.now())
+		if ha, _ := s.st.human(kid, 0); ha != nil {
+			h := computeHuman(s.site, kid, ha, s.now())
 			value, color = "grade "+h.Grade, gradeColor[h.Grade]
 		}
 	}

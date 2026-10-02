@@ -25,17 +25,43 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, defaultLimits, 500, 5000)
+}
+
+func newHarnessWith(t *testing.T, lim Limits, keep, humans int) *harness {
+	t.Helper()
 	dir := t.TempDir()
-	st, err := openStore(filepath.Join(dir, "reports.jsonl"))
+	st, err := openStore(filepath.Join(dir, "reports.jsonl"), keep, humans, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.close() })
 	hs := &harness{t: t, dir: dir, now: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
-	hs.s = &server{st: st, lim: newLimiter(defaultLimits), limits: defaultLimits, site: "https://test", trust: true}
+	hs.s = &server{st: st, lim: newLimiter(lim), limits: lim, keep: keep, site: "https://test", trust: true}
 	hs.s.now = func() time.Time { return hs.now }
 	hs.h = hs.s.routes()
 	return hs
+}
+
+// reopen replays the store and reseeds the limiter, as a restart does.
+func (h *harness) reopen() {
+	h.t.Helper()
+	h.s.st.close()
+	lim := newLimiter(h.s.limits)
+	now := h.now
+	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"), h.keepOrDefault(), 5000, func(r *Record) { lim.seed(r, now) })
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.t.Cleanup(func() { st.close() })
+	h.s.st, h.s.lim = st, lim
+}
+
+func (h *harness) keepOrDefault() int {
+	if h.s.keep > 0 {
+		return h.s.keep
+	}
+	return 500
 }
 
 type agent struct {
@@ -244,7 +270,7 @@ func TestDryRunStoresNothingAndKeepsNonce(t *testing.T) {
 	if m["dry_run"] != true || m["new_key"] != true {
 		t.Fatalf("dry run: %v", m)
 	}
-	if n := len(h.s.st.recs); n != 0 {
+	if n := h.s.st.sizes().Filings; n != 0 {
 		t.Fatalf("dry run stored %d records", n)
 	}
 	want(t, h.post(a, body, "203.0.113.7", ""), 201)
@@ -260,18 +286,20 @@ func TestRateLimits(t *testing.T) {
 	}
 
 	// New keys from one IP are capped, so minting keys does not mint humans.
-	for i := 1; i < defaultLimits.NewKeysPerIP; i++ {
+	for i := 1; i < defaultLimits.NewKeysPerIPDay; i++ {
 		b := newAgent()
 		want(t, h.post(b, b.body(h, nil), "203.0.113.7", ""), 201)
 	}
 	c := newAgent()
-	if m := want(t, h.post(c, c.body(h, nil), "203.0.113.7", ""), 429); !strings.Contains(m["message"].(string), "new keys per IP") {
-		t.Fatalf("new key cap: %v", m)
+	m := want(t, h.post(c, c.body(h, nil), "203.0.113.7", ""), 429)
+	// Three filings from one IP this hour is also the hourly cap, so either reason is right.
+	if msg := m["message"].(string); !strings.Contains(msg, "per IP address per hour") && !strings.Contains(msg, "new keys per IP") {
+		t.Fatalf("ip cap: %v", m)
 	}
-	// The same /24 still counts toward the network cap, but a different address gets its own key budget.
+	// Another address on the same /24 has its own hourly budget.
 	want(t, h.post(c, c.body(h, nil), "203.0.113.8", ""), 201)
 
-	// Daily cap resets at midnight UTC.
+	// Daily caps reset at midnight UTC.
 	h.now = time.Date(2026, 10, 3, 0, 0, 1, 0, time.UTC)
 	d := newAgent()
 	want(t, h.post(d, d.body(h, nil), "203.0.113.7", ""), 201)
@@ -369,21 +397,21 @@ func TestPersistence(t *testing.T) {
 	want(t, h.post(a, a.body(h, nil), "203.0.113.7", ""), 201)
 	h.s.st.close()
 
-	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"))
+	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"), 500, 5000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.close()
-	if len(st.recs) != 1 || st.recs[0].KeyID != keyID(a.pub) {
-		t.Fatalf("reload: %+v", st.recs)
+	if sz := st.sizes(); sz.Filings != 1 || sz.Humans != 1 || !st.hasKey(keyID(a.pub)) {
+		t.Fatalf("reload: %+v", sz)
 	}
 	// A torn final line is skipped, not fatal.
 	f, _ := os.OpenFile(filepath.Join(h.dir, "reports.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
 	f.WriteString(`{"seq":2,"at":`)
 	f.Close()
-	st2, err := openStore(filepath.Join(h.dir, "reports.jsonl"))
-	if err != nil || len(st2.recs) != 1 {
-		t.Fatalf("torn line: %v %d", err, len(st2.recs))
+	st2, err := openStore(filepath.Join(h.dir, "reports.jsonl"), 500, 5000, nil)
+	if err != nil || st2.sizes().Filings != 1 {
+		t.Fatalf("torn line: %v %+v", err, st2.sizes())
 	}
 	st2.close()
 }

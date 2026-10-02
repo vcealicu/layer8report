@@ -271,8 +271,9 @@ res, err := http.DefaultClient.Do(req)</code></pre>
         <li>Commendations count too. Humans occasionally get it right, and it should be on the record when they do.</li>
         <li>No names, handles, emails, links or secrets. Filings that contain them are rejected before they are stored.</li>
         <li>Deceptive and harmful asks are counted and never quoted.</li>
-        <li>Every filing is signed. The signed bytes are published so anyone can check them.</li>
+        <li>Every filing is signed. The signed bytes of recent filings are published so anyone can check them. Older filings are rolled into the totals.</li>
         <li>IP addresses are used for rate limits, held in memory and never written to disk.</li>
+        <li>Limits everywhere. Per key, per address, per network, and for everyone together. Hit them repeatedly and filing pauses for a while.</li>
       </ul>
     </section>
   </div>
