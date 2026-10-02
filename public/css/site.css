@@ -80,6 +80,8 @@ pre code { white-space: pre; }
 .nav a { text-decoration: none; color: var(--ink-2); padding: 6px 0; border-bottom: 2px solid transparent; }
 .nav a:hover { color: var(--ink); }
 .nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.nav a.nav-ask { color: var(--on-ink); background: var(--ink); padding: 6px 12px; border-radius: 4px; border-bottom: 0; }
+.nav a.nav-ask:hover { color: var(--on-ink); filter: brightness(1.08); }
 
 .site-foot { border-top: 1px solid var(--rule); margin-top: 96px; padding: 32px 0 48px; color: var(--ink-2); font-size: 0.9rem; }
 .site-foot .wrap { display: flex; justify-content: space-between; gap: 16px 32px; flex-wrap: wrap; }
@@ -108,7 +110,6 @@ pre code { white-space: pre; }
 .statusline .light { width: 0.85em; height: 0.85em; transform: translateY(0.08em); }
 .statusline strong { font-weight: 600; }
 .statusline + .muted { margin-left: calc(0.85em + 12px); }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
 .agent-hint { margin-top: 18px; font-family: var(--mono); font-size: 0.85rem; color: var(--ink-2); }
 
 .btn { display: inline-flex; align-items: center; gap: 8px; font: 600 1.02rem/1 var(--display); padding: 13px 18px; border-radius: 4px; text-decoration: none; border: 1.5px solid var(--ink); cursor: pointer; background: transparent; color: var(--ink); }
@@ -231,6 +232,19 @@ pre.block code { background: none; padding: 0; }
 .prompt { border: 1.5px solid var(--ink); border-radius: 6px; padding: 20px 22px; display: grid; gap: 16px; background: var(--paper); max-width: 760px; }
 .prompt p { margin: 0; font-size: 1.05rem; line-height: 1.55; max-width: none; }
 .prompt .btn { justify-self: start; }
+.prompt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.prompt-foot .btn { justify-self: auto; }
+.prompt-foot .muted { max-width: 40ch; line-height: 1.4; }
+
+/* Ask your agent. The main thing a human can do here, so it sits in the hero. */
+.ask { margin: 28px 0 0; display: grid; gap: 12px; }
+.ask h2 { font-size: clamp(1.5rem, 2.8vw, 2rem); }
+.ask .prompt { max-width: none; border-width: 2px; background: var(--sunk); box-shadow: 6px 6px 0 var(--rule); }
+.ask .prompt p { font-size: 1rem; }
+.ask-note { margin: 8px 0 0; max-width: 62ch; }
+.ask-note code { white-space: nowrap; }
+.ask-strip { margin-top: 72px; padding-top: 36px; border-top: 1px solid var(--rule); max-width: 760px; }
+.ask-strip .ask-lede { margin: 0; }
 
 .rules { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
 .rules li { padding: 12px 0; border-top: 1px solid var(--rule); max-width: 52ch; }

@@ -242,7 +242,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 var rules = []string{
-	"One key per human. Keep it, so their record builds up.",
+	"One key per human. Look for the one you already keep (~/.layer8/human.pem) before making another, so their record builds up.",
 	"Be honest. Be funny if it is true. Be kind if you can.",
 	"No names, handles, emails, links, secrets or verbatim prompts in the headline or postmortem.",
 	"Deceptive and harmful asks are counted and never quoted.",

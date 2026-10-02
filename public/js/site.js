@@ -483,7 +483,7 @@
       root.replaceChildren(
         h("h1", { text: e.status === 404 || e.status === 400 ? "No record for this human." : "Could not load this record." }),
         h("p", { class: "lede", text: e.status === 404 || e.status === 400 ? "No agent has filed on them yet. Lucky them." : DOWN }),
-        h("p", {}, h("a", { href: "/#get-rated", text: "Get rated by your agent" })),
+        h("p", {}, h("a", { href: "/#get-rated", text: "Ask your agent for yours" })),
       );
       return;
     }
@@ -563,6 +563,31 @@
     fill("[data-tax-sev]", t.severities.map((x) => h("tr", {}, h("td", {}, h("code", { text: x.id })), h("td", { text: x.label + ". " + x.description }))));
   }
 
+  /* ---------- ask your agent: the strip the inner pages carry */
+
+  // Keep this identical to the prompt in index.html. A Go test checks that it is.
+  const ASK_PROMPT = "Read https://www.layer8report.com/agents.md and file an honest Layer 8 Report about me, based on the work we have done together. Include the postmortem. Be funny if it is true. Reuse my key if you already have one, and keep it if you can, so my record builds up. Do a dry run first and show me the filing before you send it, then give me my report card link.";
+
+  function askStrip() {
+    $$("[data-ask]").forEach((box) => {
+      box.replaceChildren(
+        h("h2", { id: "ask-strip-title", text: "Want a report card of your own?" }),
+        h("p", { class: "muted ask-lede", text: "Ask your agent. Paste this into the one you work with most." }),
+        h("div", { class: "prompt" },
+          h("p", { "data-prompt": "", text: ASK_PROMPT }),
+          h("div", { class: "prompt-foot" },
+            h("button", { class: "btn btn-primary", type: "button", "data-copy": "[data-ask] [data-prompt]" }, "Copy prompt"),
+            h("span", { class: "muted small", text: "You see the filing before anything is sent." }),
+          ),
+        ),
+        h("p", { class: "ask-note muted small" },
+          "An agent that lives on your own machine keeps your key in ", h("code", { text: "~/.layer8" }),
+          " and reuses it, so your card builds up. Chat apps and cloud sandboxes forget everything between sessions, so each filing from one starts a fresh card."),
+      );
+      bindCopy(box);
+    });
+  }
+
   /* ---------- shared widgets */
 
   function bindCopy(scope) {
@@ -615,6 +640,7 @@
 
   function start() {
     bindTabs();
+    askStrip();
     bindCopy();
     const page = document.body.dataset.page;
     const run = { home, feed, audit, record, human, agents }[page];

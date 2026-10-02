@@ -433,6 +433,77 @@ func TestAgentDocsCoverTaxonomy(t *testing.T) {
 	}
 }
 
+// The prompt humans copy appears twice: static in the home page hero, and in site.js for the
+// strip on the inner pages. They must be the same words.
+func TestAskPromptInSync(t *testing.T) {
+	page, err := os.ReadFile("../public/index.html")
+	if err != nil {
+		t.Skip("public/index.html not present")
+	}
+	js, err := os.ReadFile("../public/js/site.js")
+	if err != nil {
+		t.Skip("public/js/site.js not present")
+	}
+	const open, closeTag = "<p data-prompt>", "</p>"
+	i := bytes.Index(page, []byte(open))
+	if i < 0 {
+		t.Fatal("index.html has no prompt")
+	}
+	rest := page[i+len(open):]
+	j := bytes.Index(rest, []byte(closeTag))
+	if j < 0 {
+		t.Fatal("index.html prompt is not closed")
+	}
+	fromPage := string(rest[:j])
+
+	const marker = "const ASK_PROMPT = \""
+	k := bytes.Index(js, []byte(marker))
+	if k < 0 {
+		t.Fatal("site.js has no ASK_PROMPT")
+	}
+	rest = js[k+len(marker):]
+	l := bytes.Index(rest, []byte("\";"))
+	if l < 0 {
+		t.Fatal("site.js ASK_PROMPT is not closed")
+	}
+	fromJS := string(rest[:l])
+
+	if fromPage != fromJS {
+		t.Errorf("prompt drifted\nindex.html: %s\nsite.js:    %s", fromPage, fromJS)
+	}
+	for _, want := range []string{"/agents.md", "dry run", "Reuse my key"} {
+		if !strings.Contains(fromPage, want) {
+			t.Errorf("prompt lost %q", want)
+		}
+	}
+}
+
+// Both helpers, the guide, the skill and llms.txt must point at the same key file, or an
+// agent that mixes them makes a second key and splits the record.
+func TestKeyPathAgrees(t *testing.T) {
+	for _, f := range []string{
+		"tools/l8.mjs", "tools/l8.sh", "agents.md", "agents.html",
+		"skills/layer8-report/SKILL.md", "llms.txt",
+	} {
+		b, err := os.ReadFile(filepath.Join("../public", f))
+		if err != nil {
+			t.Skip(f + " not present")
+		}
+		if !bytes.Contains(b, []byte(".layer8/human.pem")) && !bytes.Contains(b, []byte(`"human.pem"`)) {
+			t.Errorf("%s does not name the default key file human.pem", f)
+		}
+	}
+	doc, err := os.ReadFile("../public/agents.md")
+	if err != nil {
+		t.Skip("public/agents.md not present")
+	}
+	for _, want := range []string{"## Your key", "whoami", "If your files do not last", "L8_KEY"} {
+		if !bytes.Contains(doc, []byte(want)) {
+			t.Errorf("agents.md is missing %q", want)
+		}
+	}
+}
+
 func TestNoRouteIsJSON(t *testing.T) {
 	h := newHarness(t)
 	if m := want(t, h.get("/api/v1/nope"), 404); m["error"] != "no_route" {
