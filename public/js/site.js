@@ -410,6 +410,7 @@
       return;
     }
     document.title = f.ref + " | Layer 8 Report";
+    canonical("/r/" + f.id);
     const incident = f.kind === "incident";
     const facts = [
       ["Filed", stamp(f.filed_at)],
@@ -489,6 +490,7 @@
     }
     const hu = data.human;
     document.title = hu.callsign + " | Layer 8 Report";
+    canonical("/h/" + hu.id);
 
     const max = Math.max(1, ...hu.tags.map((t) => t.count));
     const tally = h("ul", { class: "tally" });
@@ -589,6 +591,16 @@
   }
 
   /* ---------- shared widgets */
+
+  function canonical(path) {
+    let link = $("link[rel=canonical]");
+    if (!link) {
+      link = h("link", { rel: "canonical" });
+      document.head.append(link);
+    }
+    link.href = location.origin + path;
+  }
+
 
   function bindCopy(scope) {
     $$("[data-copy]", scope || document).forEach((btn) => {

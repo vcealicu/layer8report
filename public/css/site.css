@@ -102,9 +102,34 @@ pre code { white-space: pre; }
 
 /* ---------- hero */
 
-.hero { padding: 64px 0 40px; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 56px; align-items: start; }
-.hero h1 { font-size: clamp(2.8rem, 6.6vw, 5rem); line-height: 0.98; letter-spacing: -0.015em; max-width: 15ch; }
-.hero .lede { font-size: 1.15rem; color: var(--ink-2); max-width: 44ch; margin: 22px 0 0; }
+.hero { padding: 64px 0 24px; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: 48px 64px; align-items: start; }
+.hero h1 { font-size: clamp(2.8rem, 6.4vw, 5rem); line-height: 0.98; letter-spacing: -0.015em; max-width: 12ch; }
+.hero .lede { font-size: 1.2rem; color: var(--ink-2); max-width: 44ch; margin: 22px 0 0; }
+.hero-ask { min-width: 0; }
+
+/* The specimen card. A real report card, stamped so nobody mistakes it for one. */
+.specimen { margin: 0; padding-top: 8px; min-width: 0; }
+.specimen figcaption { margin-top: 14px; max-width: 40ch; }
+.card-example { margin-top: 0; padding: 22px; gap: 16px 20px; grid-template-columns: auto minmax(0, 1fr); align-items: start; background: var(--band); }
+.card-example .grade-col { display: grid; gap: 12px; justify-items: center; }
+.card-example .grade { width: 96px; height: 96px; font-size: 4rem; }
+.card-example .card-who { min-width: 0; align-self: center; }
+.card-example .callsign { font-family: var(--display); font-weight: 700; font-size: clamp(1.7rem, 3vw, 2.2rem); line-height: 1.05; margin: 0; }
+.card-example .title { font-size: 1.05rem; margin-bottom: 6px; }
+.card-example .id { margin: 6px 0 10px; }
+.card-example .counts { font-size: 0.9rem; gap: 6px 16px; }
+.card-example .review { grid-column: 1 / -1; display: grid; gap: 6px; margin: 4px 0 0; padding-top: 14px; border-top: 1px dashed var(--rule); font-size: 0.92rem; }
+.card-example .review div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 12px; }
+.card-example .review dt { min-width: 0; }
+.stamp { display: inline-block; padding: 4px 9px 3px; border: 2.5px solid var(--major-text); border-radius: 3px; color: var(--major-text); font: 700 1rem/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; transform: rotate(-8deg); opacity: 0.85; mask-image: radial-gradient(ellipse at 30% 60%, #000 55%, transparent 100%), radial-gradient(ellipse at 70% 30%, #000 60%, transparent 100%); -webkit-mask-image: radial-gradient(ellipse at 30% 60%, #000 55%, transparent 100%), radial-gradient(ellipse at 70% 30%, #000 60%, transparent 100%); }
+
+/* What the record is for. Three readers, no sequence, so no numbers. */
+.roles { padding-top: 40px; }
+.roles h2 { margin-bottom: 20px; }
+.roles-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+.roles-list li { border-top: 2px solid var(--ink); padding-top: 14px; }
+.roles-list h3 { margin-bottom: 8px; }
+.roles-list p { color: var(--ink-2); font-size: 0.95rem; margin: 0; }
 .statusline { display: flex; gap: 12px; align-items: baseline; margin: 0 0 6px; font-size: 1.075rem; }
 .statusline .light { width: 0.85em; height: 0.85em; transform: translateY(0.08em); }
 .statusline strong { font-weight: 600; }
@@ -116,6 +141,12 @@ pre code { white-space: pre; }
 .btn:hover { text-decoration: none; filter: brightness(1.08); }
 .btn-small { font-size: 0.9rem; padding: 8px 12px; }
 .btn-lg { font-size: 1.15rem; padding: 16px 24px; }
+
+/* What the site is, under the ask: the motto, the live status and the OSI stack. */
+.status-intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px 64px; align-items: start; padding: 72px 0 32px; }
+.status-intro > div:first-child > p.muted { max-width: 42ch; margin-top: 14px; }
+.status-intro .statusline { font-size: 1.25rem; margin-top: 28px; }
+.status-intro .agent-hint { margin-top: 28px; }
 
 /* The OSI stack. Seven quiet layers, one loud one, and the new one on top. */
 .stack-wrap { display: grid; gap: 12px; }
@@ -229,8 +260,8 @@ pre.block code { background: none; padding: 0; }
 
 /* ---------- prompt box */
 
-.prompt { border: 1.5px solid var(--ink); border-radius: 6px; padding: 20px 22px; display: grid; gap: 16px; background: var(--paper); max-width: 760px; }
-.prompt p { margin: 0; font-size: 1.05rem; line-height: 1.55; max-width: none; }
+.prompt { border: 1.5px solid var(--ink); border-radius: 6px; padding: 20px 22px; display: grid; gap: 16px; background: var(--paper); max-width: 760px; min-width: 0; }
+.prompt p { margin: 0; font-size: 1.05rem; line-height: 1.55; max-width: none; min-width: 0; overflow-wrap: anywhere; }
 .prompt .btn { justify-self: start; }
 .prompt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .prompt-foot .btn { justify-self: auto; }
@@ -340,7 +371,12 @@ select { font: inherit; font-size: 0.95rem; color: var(--ink); background: var(-
 /* ---------- responsive */
 
 @media (max-width: 900px) {
-  .hero { grid-template-columns: 1fr; gap: 40px; padding-top: 44px; }
+  .hero { grid-template-columns: 1fr; gap: 36px; padding: 44px 0 16px; }
+  .specimen { padding-top: 0; max-width: 560px; }
+  .status-intro { grid-template-columns: 1fr; gap: 32px; padding-top: 56px; }
+  .roles-list { grid-template-columns: 1fr; gap: 20px; }
+  .hero .ask .prompt { padding: 18px 18px; box-shadow: 4px 4px 0 var(--rule); }
+  .hero .ask .prompt p { font-size: 1rem; }
   .components { grid-template-columns: 1fr; }
   .component:nth-child(2) { border-top: 1px solid var(--rule); }
   .component:nth-child(odd) { border-right: 0; }
@@ -348,10 +384,13 @@ select { font: inherit; font-size: 0.95rem; color: var(--ink); background: var(-
   .rules { grid-template-columns: 1fr; }
   .bignums { grid-template-columns: 1fr; gap: 18px; }
 }
+@media (max-width: 760px) {
+  .site-head .wrap { padding-top: 10px; padding-bottom: 8px; position: relative; }
+  .nav { gap: 2px 16px; font-size: 0.95rem; flex-basis: 100%; }
+  .nav a.nav-ask { position: absolute; top: 10px; right: var(--gutter); padding: 7px 11px; font-size: 0.9rem; }
+}
 @media (max-width: 600px) {
   :root { --gutter: 16px; }
-  .site-head .wrap { padding-top: 10px; padding-bottom: 6px; }
-  .nav { gap: 2px 16px; font-size: 0.95rem; }
   .printout { padding: 0 14px; }
   .printout::before, .printout::after { width: 14px; background-size: 14px 24px; background-image: radial-gradient(circle at 50% 50%, var(--hole) 0 3px, transparent 3.5px); }
   .filing { padding: 14px 12px 16px; }
@@ -361,8 +400,14 @@ select { font: inherit; font-size: 0.95rem; color: var(--ink); background: var(-
   .layer .name small { display: none; }
   .card { grid-template-columns: 1fr; }
   .grade { width: 96px; height: 96px; font-size: 4rem; }
+  .card-example { padding: 18px; gap: 14px 16px; }
+  .card-example .grade { width: 76px; height: 76px; font-size: 3.2rem; }
+  .card-example .review div { grid-template-columns: 6rem minmax(0, 1fr); }
+  .hero .ask .prompt { padding: 18px; box-shadow: 4px 4px 0 var(--rule); }
+  .hero .ask .prompt p { font-size: 1rem; }
   .tally li { grid-template-columns: 8.5rem minmax(0, 1fr) 2rem; }
   .component { padding: 12px 14px; }
+  .component .state { white-space: normal; max-width: 9rem; justify-content: flex-end; }
 }
 
 /* ---------- active incident, in the statuspage style it deserves */
