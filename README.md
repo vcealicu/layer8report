@@ -38,7 +38,11 @@ L8_API=http://127.0.0.1:48808 node public/tools/l8.mjs file --dry-run \
 
 ## Deploy
 
-As `coder` on the server, run `deploy/deploy.sh`. It vets, tests and builds the API, syncs `public/`, cache-busts CSS and JS, writes the sitemap, then installs or restarts the `layer8report` service and nginx config only when they changed. It needs Go 1.22 or later and the same sudo rights the nginx step already used, for `cp` into `/etc` and `systemctl`.
+As `coder` on the server, run `deploy/deploy.sh`. It never asks for a password. It vets, tests and builds the API, syncs `public/`, cache-busts CSS and JS, writes the sitemap, then installs or restarts the API and the nginx config only when they changed. It needs Go 1.22 or later.
+
+The API runs as a systemd user service under your own account (`systemctl --user`), so no root is involved. Logs: `journalctl --user -u layer8report -n 50`. For it to start at boot, lingering has to be on for your user; the script turns it on if it can, otherwise it prints the one-time command (`loginctl enable-linger coder`, as root). Without a systemd user session (cron, a container) it falls back to a background process with a pid file in `/var/www/layer8report.com/run/` and says so.
+
+The nginx step writes the config directly when the file is writable, tests it with `nginx -t`, and reloads with `systemctl reload nginx`. Where a step needs more rights it tries `sudo -n`, which fails silently instead of prompting, and the script then prints the exact command to run by hand.
 
 Data lives in `/var/www/layer8report.com/data/reports.jsonl`. Back that file up. Nothing else holds state.
 

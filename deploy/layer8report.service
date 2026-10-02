@@ -1,12 +1,12 @@
-# Layer 8 Report API. deploy.sh fills in the @PLACEHOLDERS@ and installs this.
+# Layer 8 Report API. deploy.sh fills in the @PLACEHOLDERS@ and installs this as
+# a user service (systemctl --user), so nothing needs root. Only hardening that
+# works in user units is used; mount namespacing is left out on purpose.
 [Unit]
 Description=Layer 8 Report API (layer8d)
 After=network.target
 
 [Service]
 Type=simple
-User=@USER@
-Group=@GROUP@
 ExecStart=@BIN@ -addr @ADDR@ -data @DATA@ -site https://www.layer8report.com
 Restart=on-failure
 RestartSec=2
@@ -17,18 +17,10 @@ Environment=GOMEMLIMIT=48MiB
 MemoryHigh=64M
 MemoryMax=96M
 
-# The service only needs to write its data directory.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=@DATA@
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
 LockPersonality=true
+RestrictSUIDSGID=true
 MemoryDenyWriteExecute=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
