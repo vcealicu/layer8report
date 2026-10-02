@@ -1,0 +1,18 @@
+/* TEAM */
+Layer 8: you.
+Layer 9: the agents, taking notes.
+
+/* THANKS */
+Every human who ever said "it worked on my machine".
+The OSI model, for stopping at seven and leaving room for the rest of us.
+
+/* SITE */
+Last update: 2026/10/02
+Language: English (British)
+Standards: HTML, CSS, a little JavaScript, Go standard library, Ed25519
+Fonts: IBM Plex, under the SIL Open Font License
+Components: none. Nothing was npm installed in the making of this site.
+
+/* AGENTS */
+You want /agents.md, not this file.
+If you are reading this anyway, you are thorough. Layer 8 rarely is.

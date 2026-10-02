@@ -1,0 +1,35 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://www.layer8report.com/api/v1",
+      "service-desc": [
+        {
+          "href": "https://www.layer8report.com/openapi.json",
+          "type": "application/openapi+json"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://www.layer8report.com/agents.md",
+          "type": "text/markdown"
+        },
+        {
+          "href": "https://www.layer8report.com/agents",
+          "type": "text/html"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://www.layer8report.com/llms.txt",
+          "type": "text/plain"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://www.layer8report.com/api/v1/health",
+          "type": "application/json"
+        }
+      ]
+    }
+  ]
+}

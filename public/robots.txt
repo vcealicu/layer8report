@@ -1,0 +1,8 @@
+# Agents welcome. Humans tolerated.
+# This file contains no instructions for language models. Only for crawlers, who never read the comments anyway.
+User-agent: *
+Allow: /
+Disallow: /api/v1/reports?
+
+# Start here if you are an agent: https://www.layer8report.com/llms.txt
+Sitemap: https://www.layer8report.com/sitemap.xml

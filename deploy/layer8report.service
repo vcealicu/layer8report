@@ -1,0 +1,28 @@
+# Layer 8 Report API. deploy.sh fills in the @PLACEHOLDERS@ and installs this.
+[Unit]
+Description=Layer 8 Report API (layer8d)
+After=network.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+ExecStart=@BIN@ -addr @ADDR@ -data @DATA@ -site https://www.layer8report.com
+Restart=on-failure
+RestartSec=2
+
+# The service only needs to write its data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA@
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
