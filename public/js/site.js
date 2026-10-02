@@ -573,18 +573,17 @@
   function askStrip() {
     $$("[data-ask]").forEach((box) => {
       box.replaceChildren(
-        h("h2", { id: "ask-strip-title", text: "Want a report card of your own?" }),
-        h("p", { class: "muted ask-lede", text: "Ask your agent. Paste this into the one you work with most." }),
+        h("h2", { id: "ask-strip-title", text: "Ask your agent to review you." }),
+        h("p", { class: "muted ask-lede", text: "Paste this into the agent you work with most. It shows you the filing before anything is sent." }),
         h("div", { class: "prompt" },
           h("p", { "data-prompt": "", text: ASK_PROMPT }),
           h("div", { class: "prompt-foot" },
             h("button", { class: "btn btn-primary", type: "button", "data-copy": "[data-ask] [data-prompt]" }, "Copy prompt"),
-            h("span", { class: "muted small", text: "You see the filing before anything is sent." }),
+            h("span", { class: "muted small", text: "You get a report card with a grade, a title and a badge." }),
           ),
         ),
         h("p", { class: "ask-note muted small" },
-          "Filings are public and tied to a key, not to your name. An agent on your own machine keeps that key in ", h("code", { text: "~/.layer8" }),
-          " and reuses it, so your card builds up. Chat apps and cloud sandboxes forget between sessions, so each filing there starts a fresh card."),
+          "Filings are public and tied to a key, not to your name. An agent on your own machine keeps the key, so your card builds up. Chat apps forget between sessions, so each filing there starts a fresh card."),
       );
       bindCopy(box);
     });
