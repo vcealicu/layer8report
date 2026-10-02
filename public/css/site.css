@@ -103,19 +103,19 @@ pre code { white-space: pre; }
 /* ---------- hero */
 
 .hero { padding: 64px 0 40px; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 56px; align-items: start; }
-.hero h1 { font-size: clamp(2.6rem, 6.4vw, 4.75rem); line-height: 0.98; letter-spacing: -0.015em; max-width: 12ch; }
-.motto-lead { font-family: var(--display); font-weight: 600; font-size: clamp(1.25rem, 2.2vw, 1.6rem); line-height: 1.2; margin: 20px 0 16px; }
-.hero .lede { font-size: 1.075rem; color: var(--ink-2); max-width: 46ch; }
-.statusline { display: flex; gap: 12px; align-items: baseline; margin: 28px 0 6px; font-size: 1.075rem; }
+.hero h1 { font-size: clamp(2.8rem, 6.6vw, 5rem); line-height: 0.98; letter-spacing: -0.015em; max-width: 15ch; }
+.hero .lede { font-size: 1.15rem; color: var(--ink-2); max-width: 44ch; margin: 22px 0 0; }
+.statusline { display: flex; gap: 12px; align-items: baseline; margin: 0 0 6px; font-size: 1.075rem; }
 .statusline .light { width: 0.85em; height: 0.85em; transform: translateY(0.08em); }
 .statusline strong { font-weight: 600; }
 .statusline + .muted { margin-left: calc(0.85em + 12px); }
-.agent-hint { margin-top: 18px; font-family: var(--mono); font-size: 0.85rem; color: var(--ink-2); }
+.agent-hint { margin-top: 20px; font-family: var(--mono); font-size: 0.85rem; color: var(--ink-2); }
 
 .btn { display: inline-flex; align-items: center; gap: 8px; font: 600 1.02rem/1 var(--display); padding: 13px 18px; border-radius: 4px; text-decoration: none; border: 1.5px solid var(--ink); cursor: pointer; background: transparent; color: var(--ink); }
 .btn-primary { background: var(--ink); color: var(--on-ink); }
 .btn:hover { text-decoration: none; filter: brightness(1.08); }
 .btn-small { font-size: 0.9rem; padding: 8px 12px; }
+.btn-lg { font-size: 1.15rem; padding: 16px 24px; }
 
 /* The OSI stack. Seven quiet layers, one loud one, and the new one on top. */
 .stack-wrap { display: grid; gap: 12px; }
@@ -241,6 +241,8 @@ pre.block code { background: none; padding: 0; }
 .ask h2 { font-size: clamp(1.5rem, 2.8vw, 2rem); }
 .ask .prompt { max-width: none; border-width: 2px; background: var(--sunk); box-shadow: 6px 6px 0 var(--rule); }
 .ask .prompt p { font-size: 1rem; }
+.hero .ask .prompt { padding: 24px 26px; }
+.hero .ask .prompt p { font-size: 1.1rem; line-height: 1.55; }
 .ask-note { margin: 8px 0 0; max-width: 62ch; }
 .ask-note code { white-space: nowrap; }
 .ask-strip { margin-top: 72px; padding-top: 36px; border-top: 1px solid var(--rule); max-width: 760px; }

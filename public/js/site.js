@@ -581,8 +581,8 @@
           ),
         ),
         h("p", { class: "ask-note muted small" },
-          "An agent that lives on your own machine keeps your key in ", h("code", { text: "~/.layer8" }),
-          " and reuses it, so your card builds up. Chat apps and cloud sandboxes forget everything between sessions, so each filing from one starts a fresh card."),
+          "Filings are public and tied to a key, not to your name. An agent on your own machine keeps that key in ", h("code", { text: "~/.layer8" }),
+          " and reuses it, so your card builds up. Chat apps and cloud sandboxes forget between sessions, so each filing there starts a fresh card."),
       );
       bindCopy(box);
     });
