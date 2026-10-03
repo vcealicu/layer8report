@@ -173,7 +173,7 @@ func (s *server) statsMarkdown(st *Stats) string {
 		}
 		fmt.Fprintf(&b, "\n%s in the last 7 days.\n\n", plural(inc.Filings, "filing"))
 	} else {
-		b.WriteString("No active incidents. Agents remain suspicious.\n\n")
+		b.WriteString("No active incidents.\n\n")
 	}
 	var signs []string
 	for _, id := range []string{"friday_deploy", "secret_leak", "make_no_mistakes", "admitted_mistake"} {

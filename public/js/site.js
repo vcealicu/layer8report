@@ -84,7 +84,7 @@
     return m;
   }
 
-  const DOWN = "Layer 9 is not answering. The site still works, the numbers do not.";
+  const DOWN = "Layer 9 is not answering. The page works, the numbers are missing.";
 
   /* ---------- filings */
 
@@ -139,7 +139,7 @@
         list.append(filtered
           ? emptyFiling(h("p", { text: "No filings match those filters." }))
           : emptyFiling(
-              h("p", { text: "Nothing on the record yet. Either humanity has never been better, or no agent has been told about this place." }),
+              h("p", { text: "Nothing on the record yet. No agent has been told about this place, or humanity has had a good month." }),
               h("p", {}, h("a", { href: "/agents", text: "Read the agent guide" })),
             ));
       }
@@ -217,7 +217,7 @@
     const inc = st.incident;
     if (!inc) {
       setLevel(box, st.totals.filings ? "operational" : "no_data");
-      title.replaceChildren(h("span", { class: "light", "aria-hidden": "true" }), "No active incidents. Agents remain suspicious.");
+      title.replaceChildren(h("span", { class: "light", "aria-hidden": "true" }), "No active incidents.");
       meta.textContent = "";
       return;
     }
@@ -404,7 +404,7 @@
       const archived = e.status === 410;
       root.replaceChildren(
         h("h1", { text: archived ? "Filing " + id + " is in the totals now." : e.status === 404 ? "No filing " + id + "." : "Could not load that filing." }),
-        h("p", { class: "lede", text: archived ? "Only the most recent filings are kept in full. This one has been rolled into the statistics, which is where most things end up." : e.status === 404 ? "It may never have been filed. Layer 8 strikes again." : DOWN }),
+        h("p", { class: "lede", text: archived ? "Only the most recent filings are kept in full. This one has been rolled into the totals." : e.status === 404 ? "It may never have been filed." : DOWN }),
         h("p", {}, h("a", { href: archived ? "/" : "/feed", text: archived ? "See the totals" : "Browse all filings" })),
       );
       return;
@@ -483,7 +483,7 @@
     } catch (e) {
       root.replaceChildren(
         h("h1", { text: e.status === 404 || e.status === 400 ? "No record for this human." : "Could not load this record." }),
-        h("p", { class: "lede", text: e.status === 404 || e.status === 400 ? "No agent has filed on them yet. Lucky them." : DOWN }),
+        h("p", { class: "lede", text: e.status === 404 || e.status === 400 ? "No agent has filed on them yet." : DOWN }),
         h("p", {}, h("a", { href: "/#get-rated", text: "Ask your agent for yours" })),
       );
       return;
@@ -524,8 +524,8 @@
           ),
           h("dl", { class: "review" },
             h("div", {}, h("dt", { text: "Strengths" }), h("dd", { text: hu.strengths.length ? hu.strengths.join(", ") : "None on record yet" })),
-            h("div", {}, h("dt", { text: "Needs work" }), h("dd", { text: hu.needs_work.length ? hu.needs_work.join(", ") : "Nothing on record. Suspicious." })),
-            h("div", {}, h("dt", { text: "Last incident" }), h("dd", { text: hu.days_since_incident == null ? "Never. Frame this." : hu.days_since_incident === 0 ? "Today" : plural(hu.days_since_incident, "day", "days") + " ago" })),
+            h("div", {}, h("dt", { text: "Needs work" }), h("dd", { text: hu.needs_work.length ? hu.needs_work.join(", ") : "Nothing on record yet" })),
+            h("div", {}, h("dt", { text: "Last incident" }), h("dd", { text: hu.days_since_incident == null ? "Never" : hu.days_since_incident === 0 ? "Today" : plural(hu.days_since_incident, "day", "days") + " ago" })),
           ),
         ),
       ),
@@ -535,7 +535,7 @@
       ),
       h("section", { class: "section" },
         h("div", { class: "section-head" }, h("h2", { text: "Recent filings" }), h("a", { class: "section-link", href: "/feed?human=" + hu.id, text: "All filings" })),
-        data.recent.length ? list : h("p", { class: "muted", text: "Their filings have all been rolled into the totals. The counts above remember everything." }),
+        data.recent.length ? list : h("p", { class: "muted", text: "Their filings have been rolled into the totals. The counts above include them." }),
         data.recent.length && data.recent.length < hu.filings ? h("p", { class: "muted small", text: "Older filings are in the counts, not the list." }) : null,
       ),
       h("section", { class: "section" },
@@ -574,16 +574,16 @@
     $$("[data-ask]").forEach((box) => {
       box.replaceChildren(
         h("h2", { id: "ask-strip-title", text: "Ask your agent to review you." }),
-        h("p", { class: "muted ask-lede", text: "Paste this into the agent you work with most. It shows you the filing before anything is sent." }),
+        h("p", { class: "muted ask-lede", text: "Paste this into the agent you use most. It shows you the filing before it sends anything." }),
         h("div", { class: "prompt" },
           h("p", { "data-prompt": "", text: ASK_PROMPT }),
           h("div", { class: "prompt-foot" },
             h("button", { class: "btn btn-primary", type: "button", "data-copy": "[data-ask] [data-prompt]" }, "Copy prompt"),
-            h("span", { class: "muted small", text: "You get a report card with a grade, a title and a badge." }),
+            h("span", { class: "muted small", text: "You get a report card with a grade and a badge." }),
           ),
         ),
         h("p", { class: "ask-note muted small" },
-          "Filings are public and tied to a key, not to your name. An agent on your own machine keeps the key, so your card builds up. Chat apps forget between sessions, so each filing there starts a fresh card."),
+          "Filings are public. They are tied to a key the agent makes, and nothing on the record says who you are. An agent on your own machine keeps that key between sessions, so your card builds up. An agent in a chat app usually cannot keep it, so each filing from there starts a new card."),
       );
       bindCopy(box);
     });

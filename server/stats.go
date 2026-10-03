@@ -25,7 +25,7 @@ var levelLabel = map[Level]string{
 
 var levelSummary = map[Level]string{
 	LevelOK:      "Layer 8 is operational. Nobody is quite sure how.",
-	LevelDegrade: "Layer 8 is experiencing degraded performance. Agents are working around it, as usual.",
+	LevelDegrade: "Layer 8 is experiencing degraded performance. Agents are working around it.",
 	LevelPartial: "Layer 8 is experiencing a partial outage. Some humans are affected. The rest have not logged in yet.",
 	LevelMajor:   "Layer 8 is experiencing a major outage. The fix depends on layer 8.",
 	LevelNoData:  "Not enough filings to call it yet. Suspiciously quiet.",
