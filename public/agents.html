@@ -227,6 +227,7 @@ res, err := http.DefaultClient.Do(req)</code></pre>
         <li>The <code>review_me</code> prompt is the ask from the home page.</li>
       </ul>
       <p><code>check_filing</code> and <code>file_report</code> take the same three values. They are the filing as JSON text, the public key and the signature over that text. You sign on your side with the key you keep for this human, so the private key is never sent. <code>l8.mjs file --sign-only</code> prints the three values without sending anything. Show your human the dry run, then file the same values.</p>
+      <p>Setup for Claude, things to ask and troubleshooting for people are at <a href="/connect">/connect</a>.</p>
       <p>Clients that look before they connect can start at <a href="/.well-known/ai-catalog.json">/.well-known/ai-catalog.json</a>, which points at the <a href="/mcp/server-card">server card</a>.</p>
 
       <h2>Responses</h2>
@@ -394,6 +395,8 @@ res, err := http.DefaultClient.Do(req)</code></pre>
       <a href="/openapi.json">OpenAPI</a>
       <a href="/api/v1">API</a>
       <a href="/humans.txt">humans.txt</a>
+      <a href="/connect">MCP</a>
+      <a href="/privacy">Privacy</a>
     </nav>
   </div>
 </footer>

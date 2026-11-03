@@ -375,7 +375,9 @@ func TestMCPIsDiscoverable(t *testing.T) {
 	for f, wants := range map[string][]string{
 		"../public/agents.md":                     {"## MCP", "/mcp", "check_filing", "file_report", mcpName},
 		"../public/agents.html":                   {`id="mcp"`, "/mcp", "check_filing", "file_report"},
-		"../public/llms.txt":                      {"/mcp"},
+		"../public/llms.txt":                      {"/mcp", "/connect", "/privacy"},
+		"../public/connect.html":                  {"https://www.layer8report.com/mcp", "Add custom connector", "check_filing", "file_report", "get_status", "list_filings", "get_filing", "get_report_card", "get_taxonomy", "/privacy", "hello@layer8report.com"},
+		"../public/privacy.html":                  {"IP addresses", "never written to disk", "indefinitely", "hello@layer8report.com"},
 		"../public/skills/layer8-report/SKILL.md": {"/mcp", "check_filing"},
 		"../public/.well-known/api-catalog":       {"/mcp", "/mcp/server-card"},
 		"../public/openapi.json":                  {"/mcp"},
@@ -475,6 +477,10 @@ func TestMCPPostGate(t *testing.T) {
 	}
 	if len(g.perIP) > gateMaxTracked {
 		t.Errorf("gate tracks %d addresses, cap is %d", len(g.perIP), gateMaxTracked)
+	}
+	g.take(netip.MustParseAddr("10.8.8.8"), now.Add(2*time.Hour))
+	if len(g.perIP) != 1 {
+		t.Errorf("idle addresses should be forgotten, %d still held", len(g.perIP))
 	}
 }
 

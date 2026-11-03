@@ -136,7 +136,7 @@ func serverCard(site string) map[string]any {
 		"title":       mcpTitle,
 		"description": mcpDescription,
 		"version":     mcpVersion,
-		"websiteUrl":  site + "/agents.md#mcp",
+		"websiteUrl":  site + "/connect",
 		"icons":       mcpIcons(site),
 		"remotes":     []any{mcpRemote(site)},
 	}
@@ -154,7 +154,7 @@ func registryServerJSON() map[string]any {
 		"title":       mcpTitle,
 		"description": mcpDescription,
 		"version":     mcpVersion,
-		"websiteUrl":  mcpProdSite + "/agents.md#mcp",
+		"websiteUrl":  mcpProdSite + "/connect",
 		"icons":       mcpIcons(mcpProdSite),
 		"remotes":     []any{remote},
 	}
@@ -347,7 +347,7 @@ func (m *mcpServer) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 				"name":       mcpName,
 				"title":      mcpTitle,
 				"version":    mcpVersion,
-				"websiteUrl": m.site + "/agents.md#mcp",
+				"websiteUrl": m.site + "/connect",
 				"icons":      mcpIcons(m.site),
 			},
 			"instructions": m.instructions,
@@ -810,6 +810,7 @@ type postGate struct {
 	mu     sync.Mutex
 	perIP  map[netip.Addr]*bucket
 	global bucket
+	swept  time.Time
 }
 
 type bucket struct {
@@ -823,6 +824,7 @@ const (
 	gateGlobalRate  = 20.0
 	gateGlobalBurst = 40 + 1
 	gateMaxTracked  = 10000
+	gateIdle        = time.Minute // longer than a full refill (40s)
 )
 
 func newPostGate() *postGate { return &postGate{perIP: map[netip.Addr]*bucket{}} }
@@ -832,6 +834,16 @@ func newPostGate() *postGate { return &postGate{perIP: map[netip.Addr]*bucket{}}
 func (g *postGate) take(ip netip.Addr, now time.Time) time.Duration {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// An address whose bucket has refilled carries no state worth keeping, so
+	// it is forgotten. Addresses live in memory only, for minutes at most.
+	if now.Sub(g.swept) > time.Minute {
+		for k, v := range g.perIP {
+			if now.Sub(v.at) > gateIdle {
+				delete(g.perIP, k)
+			}
+		}
+		g.swept = now
+	}
 	b := g.perIP[ip]
 	if b == nil {
 		if len(g.perIP) >= gateMaxTracked {

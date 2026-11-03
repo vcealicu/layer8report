@@ -260,6 +260,7 @@ pre.block code { background: none; padding: 0; }
 /* ---------- generic tables */
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; }
+.prose .table-wrap + p { margin-top: 14px; }
 table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
 th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 th { font-family: var(--display); font-weight: 600; font-size: 0.95rem; color: var(--ink-2); background: var(--paper); }
