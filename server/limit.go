@@ -30,6 +30,7 @@ type Limits struct {
 	// are strikes. Strikes in StrikeWindow past Strikes put the address and
 	// key in the penalty box for Block, doubling each time up to BlockMax.
 	Strikes      int
+	NetStrikes   int // strikes from one network (IPv4 /24, IPv6 /48) before it is boxed too; 0 turns it off
 	StrikeWindow time.Duration
 	Block        time.Duration
 	BlockMax     time.Duration
@@ -50,6 +51,7 @@ var defaultLimits = Limits{
 	GlobalDay:        2000,
 	DryRunsPerIPHour: 30,
 	Strikes:          20,
+	NetStrikes:       60,
 	StrikeWindow:     10 * time.Minute,
 	Block:            15 * time.Minute,
 	BlockMax:         24 * time.Hour,
@@ -187,12 +189,12 @@ func (l *limiter) trimAll() {
 	trim(l.blocks, l.lim.MaxTracked)
 }
 
-// blocked reports whether the address or key is in the penalty box.
+// blocked reports whether the address, its network or the key is in the penalty box.
 func (l *limiter) blocked(ip netip.Addr, kid string, now time.Time) *limitHit {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.roll(now)
-	for _, k := range []string{"ip:" + hostOf(ip), "key:" + kid} {
+	for _, k := range []string{"ip:" + hostOf(ip), "net:" + netOf(ip), "key:" + kid} {
 		if kid == "" && k == "key:" {
 			continue
 		}
@@ -204,14 +206,25 @@ func (l *limiter) blocked(ip netip.Addr, kid string, now time.Time) *limitHit {
 }
 
 // strike records a rejected attempt. It returns the block it placed, if any.
+//
+// The network counts too, with a higher threshold. Strikes are per /64 for
+// IPv6, and one /48 holds 65,536 of those, so without it rotating through an
+// allocation would never earn a block.
 func (l *limiter) strike(ip netip.Addr, kid string, now time.Time) *block {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.roll(now)
 	var placed *block
-	for _, k := range []string{"ip:" + hostOf(ip), "key:" + kid} {
-		if kid == "" && k == "key:" {
+	for _, k := range []string{"ip:" + hostOf(ip), "net:" + netOf(ip), "key:" + kid} {
+		threshold := l.lim.Strikes
+		switch {
+		case kid == "" && k == "key:":
 			continue
+		case k[:4] == "net:":
+			if l.lim.NetStrikes <= 0 {
+				continue
+			}
+			threshold = l.lim.NetStrikes
 		}
 		s := l.strikes[k]
 		if s == nil || now.Sub(s.since) > l.lim.StrikeWindow {
@@ -219,7 +232,7 @@ func (l *limiter) strike(ip netip.Addr, kid string, now time.Time) *block {
 			l.strikes[k] = s
 		}
 		s.n++
-		if s.n < l.lim.Strikes {
+		if s.n < threshold {
 			continue
 		}
 		delete(l.strikes, k)
@@ -263,6 +276,25 @@ func (l *limiter) checkDryRun(ip netip.Addr, now time.Time) *limitHit {
 	return nil
 }
 
+// paused reports whether filing is paused for everyone. handleFile asks before
+// reading the body, so a paused API does not verify signatures it will refuse.
+func (l *limiter) paused(now time.Time) *limitHit {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.roll(now)
+	return l.pausedLocked(now)
+}
+
+func (l *limiter) pausedLocked(now time.Time) *limitHit {
+	switch {
+	case l.hourly["global"] >= l.lim.GlobalHour:
+		return &limitHit{Reason: fmt.Sprintf("filing is paused for everyone, %d filings this hour is plenty", l.lim.GlobalHour), RetryAfter: untilNextHour(now), Paused: true}
+	case l.daily["global"] >= l.lim.GlobalDay:
+		return &limitHit{Reason: fmt.Sprintf("filing is paused for everyone, %d filings today is plenty", l.lim.GlobalDay), RetryAfter: untilMidnight(now), Paused: true}
+	}
+	return nil
+}
+
 // check returns nil when a filing may go ahead. It does not count anything.
 func (l *limiter) check(ip netip.Addr, kid string, newKey bool, now time.Time) *limitHit {
 	l.mu.Lock()
@@ -299,13 +331,7 @@ func (l *limiter) check(ip netip.Addr, kid string, newKey bool, now time.Time) *
 			return fault(fmt.Sprintf("%d new keys per network per day; keep one key per human", l.lim.NewKeysPerNetDay), day)
 		}
 	}
-	switch {
-	case l.hourly["global"] >= l.lim.GlobalHour:
-		return &limitHit{Reason: fmt.Sprintf("filing is paused for everyone, %d filings this hour is plenty", l.lim.GlobalHour), RetryAfter: hour, Paused: true}
-	case l.daily["global"] >= l.lim.GlobalDay:
-		return &limitHit{Reason: fmt.Sprintf("filing is paused for everyone, %d filings today is plenty", l.lim.GlobalDay), RetryAfter: day, Paused: true}
-	}
-	return nil
+	return l.pausedLocked(now)
 }
 
 // commit counts a stored filing and burns its nonce.

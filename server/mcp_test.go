@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -455,6 +456,19 @@ func TestMCPPostGate(t *testing.T) {
 		if isErr, text := h.tool("get_status", nil, ip); isErr {
 			t.Fatalf("read gated: %s", text)
 		}
+	}
+
+	// One IPv6 /64 is one address here, as everywhere else in the limiter.
+	v6 := newPostGate()
+	t0 := time.Now()
+	let := 0
+	for i := 0; i < gateIPBurst+5; i++ {
+		if v6.take(netip.MustParseAddr(fmt.Sprintf("2001:db8:1:2::%x", i+1)), t0) == 0 {
+			let++
+		}
+	}
+	if let != gateIPBurst {
+		t.Errorf("one /64 got %d attempts through, want %d", let, gateIPBurst)
 	}
 
 	g := newPostGate()

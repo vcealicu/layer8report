@@ -437,6 +437,14 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		s.coolingOff(w, hit)
 		return
 	}
+	// Paused filings are refused anyway, so refuse them before paying for a
+	// signature check. Dry runs still work while paused.
+	if !dry {
+		if hit := s.lim.paused(now); hit != nil {
+			s.rateLimited(w, hit, ip, "", now)
+			return
+		}
+	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
 	if err != nil {

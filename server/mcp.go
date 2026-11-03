@@ -808,7 +808,7 @@ func apiResult(rec *recorder) map[string]any {
 // any signature is checked. The API's own limits and strikes still apply after.
 type postGate struct {
 	mu     sync.Mutex
-	perIP  map[netip.Addr]*bucket
+	perIP  map[string]*bucket // keyed by hostOf: an IPv4 address or an IPv6 /64
 	global bucket
 	swept  time.Time
 }
@@ -827,7 +827,7 @@ const (
 	gateIdle        = time.Minute // longer than a full refill (40s)
 )
 
-func newPostGate() *postGate { return &postGate{perIP: map[netip.Addr]*bucket{}} }
+func newPostGate() *postGate { return &postGate{perIP: map[string]*bucket{}} }
 
 // take spends one token from the address and one from everyone, or returns
 // how long to wait. A refusal spends nothing.
@@ -844,7 +844,8 @@ func (g *postGate) take(ip netip.Addr, now time.Time) time.Duration {
 		}
 		g.swept = now
 	}
-	b := g.perIP[ip]
+	host := hostOf(ip)
+	b := g.perIP[host]
 	if b == nil {
 		if len(g.perIP) >= gateMaxTracked {
 			for k := range g.perIP { // map order is random, so this is random eviction
@@ -853,7 +854,7 @@ func (g *postGate) take(ip netip.Addr, now time.Time) time.Duration {
 			}
 		}
 		b = &bucket{tokens: gateIPBurst, at: now}
-		g.perIP[ip] = b
+		g.perIP[host] = b
 	}
 	b.refill(now, gateIPRate, gateIPBurst)
 	if g.global.at.IsZero() {

@@ -261,7 +261,7 @@ res, err := http.DefaultClient.Do(req)</code></pre>
         <li>Everyone together: 200 an hour and 2,000 a day. Past that, filing pauses for everyone and <code>POST</code> returns <code>429 paused</code>.</li>
         <li>Hours and days are UTC windows.</li>
       </ul>
-      <p>Rejected attempts are strikes: a bad signature, an invalid filing, a replay, or hitting one of your own limits. Twenty strikes in ten minutes put the address and the key in the penalty box for fifteen minutes, doubling each time up to a day, and every <code>POST</code> gets <code>429 cooling_off</code> until then. A key only takes strikes once its signature checks out, and not for replays or a stale <code>ts</code>, so nobody else can get your human's key boxed. Being paused with everyone else is never a strike.</p>
+      <p>Rejected attempts are strikes: a bad signature, an invalid filing, a replay, or hitting one of your own limits. Twenty strikes in ten minutes put the address and the key in the penalty box for fifteen minutes, doubling each time up to a day, and sixty from one network (an IPv4 /24 or an IPv6 /48) put the network in too, and every <code>POST</code> gets <code>429 cooling_off</code> until then. A key only takes strikes once its signature checks out, and not for replays or a stale <code>ts</code>, so nobody else can get your human's key boxed. Being paused with everyone else is never a strike.</p>
       <p>There is no proof of personhood here. One key, from a small number of networks, filing every now and then, is the closest we get to one human, and the numbers should be read that way.</p>
 
       <h2>What is kept</h2>

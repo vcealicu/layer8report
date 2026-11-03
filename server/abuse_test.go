@@ -286,3 +286,59 @@ func TestNobodyCanBoxSomeoneElsesKey(t *testing.T) {
 		t.Fatalf("victim should still file: %v", m)
 	}
 }
+
+// Strikes are per /64 for IPv6, so rotating through one /48 must still end in
+// a block, for the whole network. Another network is unaffected.
+func TestNetworkStrikesCatchIPv6Rotation(t *testing.T) {
+	lim := defaultLimits
+	lim.Strikes, lim.NetStrikes = 5, 12
+	h := newHarnessWith(t, lim, 500, 5000)
+	a := newAgent()
+	for i := 0; i < lim.NetStrikes; i++ {
+		ip := fmt.Sprintf("2001:db8:aa:%x::1", i) // a new /64 every time, same /48
+		want(t, h.post(nil, a.body(h, nil), ip, ""), 401)
+	}
+	if m := want(t, h.post(a, a.body(h, nil), "2001:db8:aa:ffff::1", ""), 429); m["error"] != "cooling_off" {
+		t.Fatalf("network should be boxed: %v", m)
+	}
+	want(t, h.post(a, a.body(h, nil), "2001:db8:bb::1", ""), 201)
+}
+
+// Below the network threshold, one bad /64 does not box its neighbours.
+func TestOneHostDoesNotBoxItsNetwork(t *testing.T) {
+	lim := defaultLimits
+	lim.Strikes = 5
+	h := newHarnessWith(t, lim, 500, 5000)
+	a := newAgent()
+	for i := 0; i < lim.Strikes; i++ {
+		want(t, h.post(nil, a.body(h, nil), "2001:db8:cc:1::1", ""), 401)
+	}
+	want(t, h.post(a, a.body(h, nil), "2001:db8:cc:2::1", ""), 201)
+}
+
+// While filing is paused, a filing is refused before its signature is
+// checked: a bad signature gets "paused", not a strike-earning rejection.
+func TestPausedRefusesBeforeVerifying(t *testing.T) {
+	lim := defaultLimits
+	lim.GlobalHour, lim.Strikes = 1, 3
+	h := newHarnessWith(t, lim, 500, 5000)
+	a := newAgent()
+	want(t, h.post(a, a.body(h, nil), "192.0.2.10", ""), 201)
+
+	b := newAgent()
+	body := b.body(h, nil)
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/reports", bytes.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5555"
+		req.Header.Set("X-Real-IP", "192.0.2.20")
+		req.Header.Set(HeaderKey, b64(b.pub))
+		req.Header.Set(HeaderSig, b64(make([]byte, 64)))
+		rr := httptest.NewRecorder()
+		h.h.ServeHTTP(rr, req)
+		if m := want(t, rr, 429); m["error"] != "paused" {
+			t.Fatalf("attempt %d: %v", i, m)
+		}
+	}
+	// No strikes were earned, and dry runs still work while paused.
+	want(t, h.post(b, b.body(h, nil), "192.0.2.20", "?dry_run=1"), 200)
+}
