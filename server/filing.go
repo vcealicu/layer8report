@@ -282,6 +282,9 @@ func checkHeadline(h string) []string {
 			break
 		}
 	}
+	if hiddenText(h) {
+		out = append(out, "no invisible characters (variation selectors, fillers, blank glyphs) or long runs of combining marks")
+	}
 	for _, r := range h {
 		// Fullwidth lookalikes such as ＠ and ． would slip past the checks below.
 		if r >= 0xFF00 && r <= 0xFFEF {
@@ -359,4 +362,33 @@ func family(model string) string {
 	default:
 		return "other"
 	}
+}
+
+// hiddenText catches text a person cannot see but a model can read. Format
+// characters are already refused as Cf above. This covers what is left:
+// default-ignorable code points (U+034F, the Hangul fillers), the Braille
+// blank, more than a few variation selectors (one after an emoji is normal,
+// one per byte is a hidden message) and runs of combining marks.
+func hiddenText(h string) bool {
+	selectors, marks := 0, 0
+	for _, r := range h {
+		switch {
+		case unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r), r == 0x2800:
+			return true
+		case unicode.Is(unicode.Variation_Selector, r):
+			selectors++
+			if selectors > 3 {
+				return true
+			}
+		}
+		if unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) {
+			marks++
+			if marks > 4 {
+				return true
+			}
+		} else {
+			marks = 0
+		}
+	}
+	return false
 }

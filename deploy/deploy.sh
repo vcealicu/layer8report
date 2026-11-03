@@ -32,6 +32,15 @@ NGINX_SRC="$DEPLOY_DIR/nginx.conf"
 NGINX_DEST="/etc/nginx/sites-available/www.layer8report.com"
 SITE_URL="https://www.layer8report.com"
 GO="${GO:-$(command -v go || echo /usr/local/go/bin/go)}"
+FAILED=0
+
+# su, sudo -u and some ssh setups leave XDG_RUNTIME_DIR unset, which hides the
+# systemd user session from systemctl --user even though it is running. Point
+# at it when it exists, so the service gets restarted instead of a second copy
+# being started next to it.
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
 
 echo ""
 echo "  ╔═══════════════════════════════════════╗"
@@ -172,7 +181,13 @@ else
             echo "  [—] layer8d already running (pid $(cat "$PID_FILE"))"
         fi
     fi
-    if ! { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; }; then
+    if ! { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; } &&
+        curl -fsS "http://$API_ADDR/api/v1/health" >/dev/null 2>&1; then
+        echo "  [✗] something else already answers on $API_ADDR, probably the $SERVICE systemd user service"
+        echo "      this shell cannot reach it. Restart it yourself: systemctl --user restart $SERVICE"
+        echo "      (if that says no session: export XDG_RUNTIME_DIR=/run/user/\$(id -u) first)"
+        FAILED=1
+    elif ! { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; }; then
         GOMEMLIMIT=48MiB nohup "$BIN" -addr "$API_ADDR" -data "$DATA_DIR" -site "$SITE_URL" >> "$LOG_FILE" 2>&1 &
         echo $! > "$PID_FILE"
         echo "  [⚡] layer8d started in the background (pid $!), log at $LOG_FILE"
@@ -181,15 +196,23 @@ else
     LOGS_HINT="tail -50 $LOG_FILE"
 fi
 
-HEALTHY=0
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -fsS "http://$API_ADDR/api/v1/health" >/dev/null 2>&1; then HEALTHY=1; break; fi
+# Healthy means the binary just built is the one answering, not just that
+# something answers: a stale process holding the port passes a plain check.
+WANT_BUILD="$(sha256sum "$BIN" | cut -c1-12)"
+HEALTHY=0 GOT_BUILD=""
+for _ in $(seq 1 20); do
+    GOT_BUILD="$(curl -fsS "http://$API_ADDR/api/v1/health" 2>/dev/null | sed -n 's/.*"build": *"\([0-9a-f]*\)".*/\1/p' | head -1)"
+    if [ "$GOT_BUILD" = "$WANT_BUILD" ]; then HEALTHY=1; break; fi
     sleep 0.5
 done
 if [ "$HEALTHY" = "1" ]; then
-    echo "  [✓] API healthy on $API_ADDR"
+    echo "  [✓] API healthy on $API_ADDR, build $WANT_BUILD"
+elif [ -n "$GOT_BUILD" ] || curl -fsS "http://$API_ADDR/api/v1/health" >/dev/null 2>&1; then
+    echo "  [✗] an old layer8d (build ${GOT_BUILD:-unknown}) still answers on $API_ADDR, not the new $WANT_BUILD. Check: $LOGS_HINT"
+    FAILED=1
 else
     echo "  [✗] API not answering on $API_ADDR. Check: $LOGS_HINT"
+    FAILED=1
 fi
 
 # Nginx config (if changed). Writes the file directly when it can, tests with
@@ -234,5 +257,10 @@ if [ -f "$NGINX_SRC" ]; then
 fi
 
 echo ""
+if [ "$FAILED" = "1" ]; then
+    echo "  ❌ DEPLOYED WITH ERRORS, see [✗] above"
+    echo ""
+    exit 1
+fi
 echo "  ✅ DEPLOYED"
 echo ""
