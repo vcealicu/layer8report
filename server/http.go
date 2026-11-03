@@ -575,6 +575,22 @@ func onlyField(ps []Problem, field string) bool {
 	return len(ps) > 0
 }
 
+// checkpoint saves the store and the limiter's key-based state together. It
+// holds wmu so no filing lands between the two.
+func (s *server) checkpoint() error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if !s.st.changedSinceCheckpoint() {
+		return nil
+	}
+	now := s.now()
+	extra, err := json.Marshal(s.lim.persist(now))
+	if err != nil {
+		return err
+	}
+	return s.st.saveCheckpoint(extra, now)
+}
+
 // rateLimited answers a limit hit. Hitting your own limits counts as a strike;
 // everyone being paused does not.
 func (s *server) rateLimited(w http.ResponseWriter, hit *limitHit, ip netip.Addr, kid string, now time.Time) {

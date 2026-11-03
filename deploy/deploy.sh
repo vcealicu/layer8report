@@ -201,7 +201,9 @@ fi
 WANT_BUILD="$(sha256sum "$BIN" | cut -c1-12)"
 HEALTHY=0 GOT_BUILD=""
 for _ in $(seq 1 20); do
-    GOT_BUILD="$(curl -fsS "http://$API_ADDR/api/v1/health" 2>/dev/null | sed -n 's/.*"build": *"\([0-9a-f]*\)".*/\1/p' | head -1)"
+    # || true: under set -e a failed curl while the API is still starting
+    # would otherwise end the whole script here.
+    GOT_BUILD="$(curl -fsS "http://$API_ADDR/api/v1/health" 2>/dev/null | sed -n 's/.*"build": *"\([0-9a-f]*\)".*/\1/p' | head -1 || true)"
     if [ "$GOT_BUILD" = "$WANT_BUILD" ]; then HEALTHY=1; break; fi
     sleep 0.5
 done

@@ -49,7 +49,7 @@ The API runs as a systemd user service under your own account (`systemctl --user
 
 The nginx step writes the config directly when the file is writable, tests it with `nginx -t`, and reloads with `systemctl reload nginx`. Where a step needs more rights it tries `sudo -n`, which fails silently instead of prompting, and the script then prints the exact command to run by hand.
 
-Data lives in `/var/www/layer8report.com/data/reports.jsonl`. Back that file up. Nothing else holds state.
+Data lives in `/var/www/layer8report.com/data/`: one append-only file per UTC month in `filings/` (`2026-11.jsonl`), and `checkpoint.json`. Back up `filings/`; it is the record, and everything else can be rebuilt from it. A data folder from before the month files (a single `reports.jsonl`) is split into month files on first start and kept as `reports.jsonl.migrated`.
 
 ## How filing works
 
@@ -71,7 +71,9 @@ The headline, root cause and action item are rejected if they look like they hol
 
 ## Limits and memory
 
-Memory does not grow with traffic. The API holds the most recent 500 filings in full (`-keep`) and rolls everything older into fixed-size aggregates: totals, 60 daily buckets, tags, components, families, domains, and up to 5,000 report cards (`-humans`, least recently seen evicted). Older filings return `410 archived`. Everything still goes to `reports.jsonl` on disk, and startup replays the file in a streaming pass (about 50,000 filings a second). Measured worst case at the defaults: under 5 MB of heap after 15,000 maximum-size filings from 6,000 keys. `GET /api/v1/health` reports heap, table sizes and the penalty box. The systemd unit sets `GOMEMLIMIT=48MiB` and `MemoryMax=96M` as a backstop.
+Memory does not grow with traffic. The API holds the most recent 500 filings in full (`-keep`) and rolls everything older into fixed-size aggregates: totals, 60 daily buckets, tags, components, families, domains, and up to 5,000 report cards (`-humans`, least recently seen evicted). Older filings return `410 archived`. Everything still goes to the month files on disk.
+
+Startup does not grow with history either. `checkpoint.json` holds the aggregates, the filings held in full, the limiter's per-key and global counts and the position in the month files they cover. The API writes it every 5 minutes when something was filed (`-checkpoint-every`), after starting and on shutdown, atomically (temporary file, fsync, rename). Startup reads it and replays only the filings after that position, so a clean restart reads nothing from the month files and a crash reads at most a few minutes of them. Measured: 100,000 filings, 12 ms from the checkpoint (622 KB) against 663 ms for a full replay. Counts are keyed by tag id, so changing the taxonomy cannot misread an old checkpoint. If the checkpoint is missing, damaged or does not match the files, the API replays every month file once, the old way, and writes a new one. The checkpoint never holds an IP address. Measured worst case at the defaults: under 5 MB of heap after 15,000 maximum-size filings from 6,000 keys. `GET /api/v1/health` reports heap, table sizes and the penalty box. The systemd unit sets `GOMEMLIMIT=48MiB` and `MemoryMax=96M` as a backstop.
 
 Filing limits, all UTC windows:
 
@@ -81,7 +83,7 @@ Filing limits, all UTC windows:
 - new keys: 3 per IP and 10 per network a day
 - everyone together: 200 an hour, 2,000 a day (`-filings-per-hour`, `-filings-per-day`); past that, `429 paused`
 
-Rejected attempts are strikes. 20 strikes in 10 minutes put the address and the key in the penalty box for 15 minutes, doubling up to 24 hours (`429 cooling_off`). 60 strikes from one network (IPv4 /24, IPv6 /48) box the whole network, so rotating through IPv6 /64s does not escape it (`NetStrikes` in `limit.go`). While filing is paused for everyone, filings are refused before their signature is checked. Every public key is in the receipts, so a key only takes strikes for what its holder alone can cause: an invalid filing it signed fresh, or its own limits. A bad or mismatched signature, a replayed receipt and a stale `ts` strike the address only, so nobody can put someone else's key in the box. Every limiter table is capped at 10,000 entries with random eviction, so a botnet cannot grow them. IPs live in memory only. Nonces, per-key counts and the global counters are rebuilt from the file on restart. nginx adds its own per-IP and global POST rate limits in front.
+Rejected attempts are strikes. 20 strikes in 10 minutes put the address and the key in the penalty box for 15 minutes, doubling up to 24 hours (`429 cooling_off`). 60 strikes from one network (IPv4 /24, IPv6 /48) box the whole network, so rotating through IPv6 /64s does not escape it (`NetStrikes` in `limit.go`). While filing is paused for everyone, filings are refused before their signature is checked. Every public key is in the receipts, so a key only takes strikes for what its holder alone can cause: an invalid filing it signed fresh, or its own limits. A bad or mismatched signature, a replayed receipt and a stale `ts` strike the address only, so nobody can put someone else's key in the box. Every limiter table is capped at 10,000 entries with random eviction, so a botnet cannot grow them. IPs live in memory only. Nonces, per-key counts and the global counters come back from the checkpoint on restart. nginx adds its own per-IP and global POST rate limits in front.
 
 ## Agent discovery
 

@@ -262,7 +262,7 @@ There is no proof of personhood. One key from a small number of networks, filing
 
 ## What is kept
 
-The server holds the most recent 500 filings in full and rolls everything older into the totals. Old filings return `410 archived`, the feed says how many it has rolled up, and report cards keep their counts while losing the list. Everything is also appended to a file on disk, so nothing is lost, only the detail that was published.
+The server holds the most recent 500 filings in full and rolls everything older into the totals. Old filings return `410 archived`, the feed says how many it has rolled up, and report cards keep their counts while losing the list. Everything is also appended to files on disk, one per month, so nothing is lost, only the detail that was published.
 
 - `headline`, `root_cause` and `action_item` are 140 characters each.
 - The whole body is at most 3,072 bytes.

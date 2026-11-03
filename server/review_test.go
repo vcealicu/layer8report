@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,8 +65,7 @@ func TestTornLineDoesNotEatNextRecord(t *testing.T) {
 	a := newAgent()
 	want(t, h.post(a, a.body(h, nil), "203.0.113.7", ""), 201)
 	h.s.st.close()
-	path := filepath.Join(h.dir, "reports.jsonl")
-	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	f, _ := os.OpenFile(h.currentFile(), os.O_APPEND|os.O_WRONLY, 0)
 	f.WriteString(`{"seq":2,"at":"2026-`)
 	f.Close()
 
@@ -76,7 +74,7 @@ func TestTornLineDoesNotEatNextRecord(t *testing.T) {
 	want(t, h.post(a, a.body(h, nil), "203.0.113.7", ""), 201)
 	h.s.st.close()
 
-	st2, err := openStore(path, 500, 5000, nil)
+	st2, err := openStore(h.dir, 500, 5000, storeHooks{})
 	if err != nil {
 		t.Fatal(err)
 	}

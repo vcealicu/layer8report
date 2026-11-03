@@ -31,7 +31,7 @@ func newHarness(t *testing.T) *harness {
 func newHarnessWith(t *testing.T, lim Limits, keep, humans int) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := openStore(filepath.Join(dir, "reports.jsonl"), keep, humans, nil)
+	st, err := openStore(dir, keep, humans, storeHooks{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,18 +43,43 @@ func newHarnessWith(t *testing.T, lim Limits, keep, humans int) *harness {
 	return hs
 }
 
-// reopen replays the store and reseeds the limiter, as a restart does.
-func (h *harness) reopen() {
+// reopen is a clean restart: a checkpoint on the way out, as main does.
+func (h *harness) reopen() { h.restart(true) }
+
+// crash is a restart without the closing checkpoint, so the store comes back
+// from an older checkpoint, or from the files alone, plus a replay.
+func (h *harness) crash() { h.restart(false) }
+
+func (h *harness) restart(clean bool) {
 	h.t.Helper()
+	if clean {
+		if err := h.s.checkpoint(); err != nil {
+			h.t.Fatal(err)
+		}
+	}
 	h.s.st.close()
 	lim := newLimiter(h.s.limits)
 	now := h.now
-	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"), h.keepOrDefault(), 5000, func(r *Record) { lim.seed(r, now) })
+	st, err := openStore(h.dir, h.keepOrDefault(), 5000, storeHooks{
+		Restore: func(extra json.RawMessage) {
+			var ls limiterState
+			if err := json.Unmarshal(extra, &ls); err != nil {
+				h.t.Fatal(err)
+			}
+			lim.restore(ls, now)
+		},
+		Replay: func(r *Record) { lim.seed(r, now) },
+	})
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	h.t.Cleanup(func() { st.close() })
 	h.s.st, h.s.lim = st, lim
+}
+
+// currentFile is the month file new filings go to.
+func (h *harness) currentFile() string {
+	return filepath.Join(h.dir, "filings", monthOf(h.now)+".jsonl")
 }
 
 func (h *harness) keepOrDefault() int {
@@ -397,7 +422,7 @@ func TestPersistence(t *testing.T) {
 	want(t, h.post(a, a.body(h, nil), "203.0.113.7", ""), 201)
 	h.s.st.close()
 
-	st, err := openStore(filepath.Join(h.dir, "reports.jsonl"), 500, 5000, nil)
+	st, err := openStore(h.dir, 500, 5000, storeHooks{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,10 +431,10 @@ func TestPersistence(t *testing.T) {
 		t.Fatalf("reload: %+v", sz)
 	}
 	// A torn final line is skipped, not fatal.
-	f, _ := os.OpenFile(filepath.Join(h.dir, "reports.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	f, _ := os.OpenFile(h.currentFile(), os.O_APPEND|os.O_WRONLY, 0)
 	f.WriteString(`{"seq":2,"at":`)
 	f.Close()
-	st2, err := openStore(filepath.Join(h.dir, "reports.jsonl"), 500, 5000, nil)
+	st2, err := openStore(h.dir, 500, 5000, storeHooks{})
 	if err != nil || st2.sizes().Filings != 1 {
 		t.Fatalf("torn line: %v %+v", err, st2.sizes())
 	}

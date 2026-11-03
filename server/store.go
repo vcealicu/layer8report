@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,14 +28,21 @@ type Record struct {
 	fam    string    // model family, worked out once at index time
 }
 
-// store is an append-only JSONL file on disk with a bounded view in memory:
-// the last `keep` filings in full, plus aggregates for everything. Memory use
-// does not grow with the number of filings.
+// store keeps filings in append-only JSONL files, one per UTC month, under
+// dir/filings/YYYY-MM.jsonl, with a bounded view in memory: the last `keep`
+// filings in full, plus aggregates for everything. Memory use does not grow
+// with the number of filings.
+//
+// Startup does not grow with them either. dir/checkpoint.json holds the
+// aggregates, the recent filings and the position in the files they cover, so
+// opening the store reads the checkpoint and replays only what was filed after
+// it. Without a usable checkpoint it replays every file, once.
 type store struct {
 	mu       sync.RWMutex
-	path     string
+	dir      string
 	f        *os.File
-	size     int64 // bytes of complete lines on disk
+	month    string // the file f appends to, "2006-01"
+	size     int64  // bytes of complete lines in that file
 	keep     int
 	ring     []*Record // chronological, at most keep
 	lastSeq  int64
@@ -43,64 +51,204 @@ type store struct {
 	stats    *Stats
 	built    time.Time
 	dirty    bool
+	ckptSeq  int64 // lastSeq covered by the checkpoint on disk
+	opened   openReport
 }
 
-// openStore replays the file, calling onLoad for every record so the caller can
-// rebuild its own state without the records being kept.
-func openStore(path string, keep, humansCap int, onLoad func(*Record)) (*store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+// storeHooks lets the caller rebuild its own state while the store opens.
+// Restore gets the extra state saved with the checkpoint (the limiter's
+// key-based counts), Replay every filing read from the files after it.
+type storeHooks struct {
+	Restore func(extra json.RawMessage)
+	Replay  func(*Record)
+}
+
+// openReport says how the store came up, for the startup log and the tests.
+type openReport struct {
+	FromCheckpoint bool
+	Replayed       int // filings folded in from the files
+	Read           int // lines read from the files, Replayed plus any the checkpoint already had
+	Migrated       int // filings moved from the old single file
+	Files          int
+}
+
+func monthOf(t time.Time) string { return t.UTC().Format("2006-01") }
+
+func (s *store) filesDir() string            { return filepath.Join(s.dir, "filings") }
+func (s *store) fileFor(month string) string { return filepath.Join(s.filesDir(), month+".jsonl") }
+
+// months lists the month files on disk, oldest first.
+func (s *store) months() ([]string, error) {
+	ents, err := os.ReadDir(s.filesDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	s := &store{path: path, keep: max(keep, 1), agg: newAggregates(max(humansCap, 1)), dirty: true}
-	if err := s.repair(); err != nil {
+	var out []string
+	for _, e := range ents {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		m := strings.TrimSuffix(name, ".jsonl")
+		if _, err := time.Parse("2006-01", m); err == nil {
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func openStore(dir string, keep, humansCap int, hooks storeHooks) (*store, error) {
+	s := &store{dir: dir, keep: max(keep, 1), agg: newAggregates(max(humansCap, 1)), dirty: true}
+	if err := os.MkdirAll(s.filesDir(), 0o750); err != nil {
 		return nil, err
 	}
-	if err := s.load(onLoad); err != nil {
-		return nil, err
+	if err := s.migrate(); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+	months, err := s.months()
 	if err != nil {
 		return nil, err
 	}
-	s.f = f
+	s.opened.Files = len(months)
+	if len(months) > 0 {
+		s.month = months[len(months)-1]
+		if s.size, err = repair(s.fileFor(s.month)); err != nil {
+			return nil, err
+		}
+	}
+
+	from, offset := "", int64(0)
+	if ck, ok := s.readCheckpoint(months); ok {
+		s.restore(ck)
+		if hooks.Restore != nil && len(ck.Extra) > 0 {
+			hooks.Restore(ck.Extra)
+		}
+		from, offset = ck.Month, ck.Offset
+		s.opened.FromCheckpoint = true
+	}
+	for _, m := range months {
+		if m < from {
+			continue
+		}
+		start := int64(0)
+		if m == from {
+			start = offset
+		}
+		if err := s.replay(m, start, hooks.Replay); err != nil {
+			return nil, err
+		}
+	}
+	s.archived = int64(s.agg.filings - len(s.ring))
+	if s.month != "" {
+		if s.f, err = os.OpenFile(s.fileFor(s.month), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// migrate splits the single reports.jsonl that earlier versions wrote into
+// month files, once, and keeps the original as reports.jsonl.migrated.
+func (s *store) migrate() error {
+	old := filepath.Join(s.dir, "reports.jsonl")
+	if _, err := os.Stat(old); err != nil {
+		return nil
+	}
+	if months, err := s.months(); err != nil || len(months) > 0 {
+		return err
+	}
+	if _, err := repair(old); err != nil {
+		return err
+	}
+	in, err := os.Open(old)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out := map[string]*os.File{}
+	defer func() {
+		for _, f := range out {
+			f.Close()
+		}
+	}()
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var r struct {
+			At time.Time `json:"at"`
+		}
+		if err := json.Unmarshal(line, &r); err != nil {
+			continue // load skips it too
+		}
+		m := monthOf(r.At)
+		f := out[m]
+		if f == nil {
+			if f, err = os.OpenFile(s.fileFor(m), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640); err != nil {
+				return err
+			}
+			out[m] = f
+		}
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			return err
+		}
+		s.opened.Migrated++
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	for _, f := range out {
+		if err := f.Sync(); err != nil {
+			return err
+		}
+	}
+	log.Printf("store: moved %d filings from %s into month files", s.opened.Migrated, old)
+	return os.Rename(old, old+".migrated")
 }
 
 // repair cuts a torn last line left by a crash, so the next append starts on
 // a fresh line instead of being glued to the fragment. Only the tail is read.
-func (s *store) repair() error {
-	f, err := os.OpenFile(s.path, os.O_RDWR, 0)
+// It returns the size of the complete lines.
+func repair(path string) (int64, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if os.IsNotExist(err) {
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	size := fi.Size()
 	tail := min(size, 1<<20) // a line is a few KB at most
 	buf := make([]byte, tail)
 	if _, err := f.ReadAt(buf, size-tail); err != nil && err != io.EOF {
-		return err
+		return 0, err
 	}
 	keep := size
 	if tail > 0 && buf[tail-1] != '\n' {
 		keep = size - tail + int64(bytes.LastIndexByte(buf, '\n')+1)
-		log.Printf("store: dropping %d bytes of torn last line", size-keep)
+		log.Printf("store: dropping %d bytes of torn last line in %s", size-keep, filepath.Base(path))
 		if err := f.Truncate(keep); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	s.size = keep
-	return nil
+	return keep, nil
 }
 
-func (s *store) load(onLoad func(*Record)) error {
-	f, err := os.Open(s.path)
+// replay reads one month file from byte offset start.
+func (s *store) replay(month string, start int64, onLoad func(*Record)) error {
+	f, err := os.Open(s.fileFor(month))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -108,6 +256,9 @@ func (s *store) load(onLoad func(*Record)) error {
 		return err
 	}
 	defer f.Close()
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return err
+	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	line := 0
@@ -116,12 +267,17 @@ func (s *store) load(onLoad func(*Record)) error {
 		if len(sc.Bytes()) == 0 {
 			continue
 		}
+		s.opened.Read++
 		r := new(Record)
 		if err := json.Unmarshal(sc.Bytes(), r); err != nil {
-			log.Printf("store: skipping line %d: %v", line, err)
+			log.Printf("store: skipping %s line %d after byte %d: %v", month, line, start, err)
 			continue
 		}
+		if r.Seq <= s.lastSeq {
+			continue // already in the checkpoint
+		}
 		s.ingest(r)
+		s.opened.Replayed++
 		if onLoad != nil {
 			onLoad(r)
 		}
@@ -149,6 +305,9 @@ func (s *store) ingest(r *Record) {
 func (s *store) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return nil
+	}
 	return s.f.Close()
 }
 
@@ -159,10 +318,26 @@ func (s *store) hasKey(kid string) bool {
 	return ok
 }
 
-// append assigns a sequence number, writes, syncs, then ingests.
+// append assigns a sequence number, writes to this month's file, syncs, then
+// ingests. A new month starts a new file.
 func (s *store) append(r *Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if m := monthOf(r.At); s.f == nil || m > s.month {
+		f, err := os.OpenFile(s.fileFor(m), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+		if err != nil {
+			return err
+		}
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if s.f != nil {
+			s.f.Close()
+		}
+		s.f, s.month, s.size = f, m, fi.Size()
+	}
 	r.Seq = s.lastSeq + 1
 	b, err := json.Marshal(r)
 	if err != nil {

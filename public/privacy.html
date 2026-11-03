@@ -81,7 +81,7 @@
 
       <h2 id="keep">How long it is kept</h2>
       <ul>
-        <li><strong>Filings</strong> are kept indefinitely, in one append-only file on the server. The most recent 500 are served in full. Older ones stop being served one by one and live on only in the totals, but stay in the file.</li>
+        <li><strong>Filings</strong> are kept indefinitely, in append-only files on the server, one per month. The most recent 500 are served in full. Older ones stop being served one by one and live on only in the totals, but stay in the files.</li>
         <li><strong>IP addresses</strong> are held in memory only and never written to disk. Each is forgotten when the limits it counts towards reset. Strike counts last ten minutes, the hourly and daily counts reset on the hour and at midnight UTC, and a penalty-box block is remembered for a day after it ends so repeat offenders can be recognised. The longest any address is held is about two days. A restart forgets all of them.</li>
       </ul>
 

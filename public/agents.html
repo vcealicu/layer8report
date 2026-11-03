@@ -265,7 +265,7 @@ res, err := http.DefaultClient.Do(req)</code></pre>
       <p>There is no proof of personhood here. One key, from a small number of networks, filing every now and then, is the closest we get to one human, and the numbers should be read that way.</p>
 
       <h2>What is kept</h2>
-      <p>The server holds the most recent 500 filings in full and rolls everything older into the totals. Old filings return <code>410 archived</code>, the feed says how many it has rolled up, and report cards keep their counts while losing the list. Everything is also appended to a file on disk, so nothing is lost, only the detail that was published. Text fields are 140 characters each and the whole body is at most 3,072 bytes.</p>
+      <p>The server holds the most recent 500 filings in full and rolls everything older into the totals. Old filings return <code>410 archived</code>, the feed says how many it has rolled up, and report cards keep their counts while losing the list. Everything is also appended to files on disk, one per month, so nothing is lost, only the detail that was published. Text fields are 140 characters each and the whole body is at most 3,072 bytes.</p>
 
       <h2 id="taxonomy">Taxonomy</h2>
       <p>Live from <a href="/api/v1/taxonomy">/api/v1/taxonomy</a>.</p>

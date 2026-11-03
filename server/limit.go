@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -397,4 +398,79 @@ func (l *limiter) sizes() limiterSizes {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return limiterSizes{Daily: len(l.daily), Hourly: len(l.hourly), Nonces: len(l.nonces), Strikes: len(l.strikes), Blocked: len(l.blocks), Cap: l.lim.MaxTracked}
+}
+
+// limiterState is what survives a restart: today's per-key and global counts,
+// this hour's global count, the last filing time per key and the nonces still
+// inside the replay window. It is saved in the store's checkpoint. Nothing
+// keyed by an IP address or a network is ever part of it.
+type limiterState struct {
+	Day     string               `json:"day"`
+	Hour    string               `json:"hour"`
+	Daily   map[string]int       `json:"daily"`
+	Hourly  map[string]int       `json:"hourly"`
+	LastKey map[string]time.Time `json:"last_key"`
+	Nonces  map[string]time.Time `json:"nonces"`
+}
+
+// persistable is true for counters that are about keys or everyone, never
+// about an address: "key:<id>" and "global".
+func persistable(k string) bool { return k == "global" || strings.HasPrefix(k, "key:") }
+
+func (l *limiter) persist(now time.Time) limiterState {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.roll(now)
+	st := limiterState{Day: l.day, Hour: l.hour, Daily: map[string]int{}, Hourly: map[string]int{},
+		LastKey: make(map[string]time.Time, len(l.lastKey)), Nonces: make(map[string]time.Time, len(l.nonces))}
+	for k, v := range l.daily {
+		if persistable(k) {
+			st.Daily[k] = v
+		}
+	}
+	for k, v := range l.hourly {
+		if persistable(k) {
+			st.Hourly[k] = v
+		}
+	}
+	for k, v := range l.lastKey {
+		st.LastKey[k] = v
+	}
+	for k, v := range l.nonces {
+		st.Nonces[k] = v
+	}
+	return st
+}
+
+// restore loads a saved state. Counts from another day or hour are dropped,
+// as are nonces that have expired.
+func (l *limiter) restore(st limiterState, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.roll(now)
+	if st.Day == l.day {
+		for k, v := range st.Daily {
+			if persistable(k) {
+				l.daily[k] += v
+			}
+		}
+	}
+	if st.Hour == l.hour {
+		for k, v := range st.Hourly {
+			if persistable(k) {
+				l.hourly[k] += v
+			}
+		}
+	}
+	for k, v := range st.LastKey {
+		if v.After(l.lastKey[k]) {
+			l.lastKey[k] = v
+		}
+	}
+	for k, exp := range st.Nonces {
+		if now.Before(exp) {
+			l.nonces[k] = exp
+		}
+	}
+	l.trimAll()
 }

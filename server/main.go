@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -26,7 +27,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:48808", "listen address")
-	data := flag.String("data", "data", "directory for reports.jsonl")
+	data := flag.String("data", "data", "directory for the month files (filings/YYYY-MM.jsonl) and checkpoint.json")
 	site := flag.String("site", "https://www.layer8report.com", "public base URL used in links")
 	trust := flag.Bool("trust-proxy", true, "take the client IP from X-Real-IP when the peer is loopback")
 	static := flag.String("static", "", "also serve this public/ directory (local development only)")
@@ -34,6 +35,7 @@ func main() {
 	humans := flag.Int("humans", 5000, "report cards to track; the least recently seen are dropped past this")
 	perHour := flag.Int("filings-per-hour", defaultLimits.GlobalHour, "filings accepted per hour from everyone together")
 	perDay := flag.Int("filings-per-day", defaultLimits.GlobalDay, "filings accepted per day from everyone together")
+	every := flag.Duration("checkpoint-every", 5*time.Minute, "how often to write checkpoint.json when something was filed")
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
@@ -41,7 +43,15 @@ func main() {
 	limits.GlobalHour, limits.GlobalDay = *perHour, *perDay
 	lim := newLimiter(limits)
 	started := time.Now()
-	st, err := openStore(filepath.Join(*data, "reports.jsonl"), *keep, *humans, func(r *Record) { lim.seed(r, started) })
+	st, err := openStore(*data, *keep, *humans, storeHooks{
+		Restore: func(extra json.RawMessage) {
+			var ls limiterState
+			if err := json.Unmarshal(extra, &ls); err == nil {
+				lim.restore(ls, started)
+			}
+		},
+		Replay: func(r *Record) { lim.seed(r, started) },
+	})
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
@@ -67,9 +77,34 @@ func main() {
 		MaxHeaderBytes:    16 << 10,
 	}
 
+	// Write a checkpoint now if the files had anything the old one did not, so
+	// the next start is quick, then every few minutes and on the way out.
+	if err := s.checkpoint(); err != nil {
+		log.Printf("checkpoint: %v", err)
+	}
+	stopCkpt := make(chan struct{})
 	go func() {
-		sz := st.sizes()
-		log.Printf("layer8d build %s listening on %s, %d filings on record, %d kept in full, %d humans tracked, replay took %s", s.build, *addr, sz.Filings, sz.Kept, sz.Humans, time.Since(started).Round(time.Millisecond))
+		t := time.NewTicker(*every)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := s.checkpoint(); err != nil {
+					log.Printf("checkpoint: %v", err)
+				}
+			case <-stopCkpt:
+				return
+			}
+		}
+	}()
+
+	go func() {
+		sz, op := st.sizes(), st.opened
+		how := "full replay"
+		if op.FromCheckpoint {
+			how = "checkpoint"
+		}
+		log.Printf("layer8d build %s listening on %s, %d filings on record, %d kept in full, %d humans tracked, started from %s plus %d filings in %s", s.build, *addr, sz.Filings, sz.Kept, sz.Humans, how, op.Replayed, time.Since(started).Round(time.Millisecond))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("listen: %v", err)
 		}
@@ -81,6 +116,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	close(stopCkpt)
+	if err := s.checkpoint(); err != nil {
+		log.Printf("checkpoint: %v", err)
+	}
 	_ = st.close()
 	log.Printf("layer8d stopped")
 }
