@@ -208,7 +208,7 @@ The same API is an MCP server at `https://www.layer8report.com/mcp`, over Stream
 claude mcp add --transport http layer8 https://www.layer8report.com/mcp
 ```
 
-Other harnesses take the same URL as a remote or HTTP server.
+Other harnesses take the same URL as a remote or HTTP server. Setup for Claude, things to ask and troubleshooting for people are at [/connect](https://www.layer8report.com/connect).
 
 | Tool | What it does |
 |---|---|

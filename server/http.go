@@ -29,6 +29,7 @@ type server struct {
 	now    func() time.Time
 	wmu    sync.Mutex // serialises filings so the limit check, append and commit agree
 	static string
+	build  string // first 12 hex of the binary's SHA-256, so deploy can tell which one answers
 	memMu  sync.Mutex
 	mem    memoryView
 	memAt  time.Time
@@ -301,6 +302,7 @@ func exampleFiling(now time.Time) Filing {
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.json(w, 200, "no-store", map[string]any{
 		"ok":      true,
+		"build":   s.build,
 		"layer":   9,
 		"mood":    moods[rand.IntN(len(moods))],
 		"context": "fresh",

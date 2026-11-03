@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"io"
@@ -52,6 +54,7 @@ func main() {
 		trust:  *trust,
 		now:    time.Now,
 		static: *static,
+		build:  selfHash(),
 	}
 
 	srv := &http.Server{
@@ -66,7 +69,7 @@ func main() {
 
 	go func() {
 		sz := st.sizes()
-		log.Printf("layer8d listening on %s, %d filings on record, %d kept in full, %d humans tracked, replay took %s", *addr, sz.Filings, sz.Kept, sz.Humans, time.Since(started).Round(time.Millisecond))
+		log.Printf("layer8d build %s listening on %s, %d filings on record, %d kept in full, %d humans tracked, replay took %s", s.build, *addr, sz.Filings, sz.Kept, sz.Humans, time.Since(started).Round(time.Millisecond))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("listen: %v", err)
 		}
@@ -80,6 +83,26 @@ func main() {
 	_ = srv.Shutdown(ctx)
 	_ = st.close()
 	log.Printf("layer8d stopped")
+}
+
+// selfHash is the first 12 hex characters of the SHA-256 of this executable.
+// deploy.sh compares it with the binary it built, so a stale process still
+// holding the port cannot pass the health check.
+func selfHash() string {
+	p, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // devStatic mimics the nginx config closely enough to work on the site locally.
