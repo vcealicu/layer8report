@@ -36,6 +36,10 @@ node ~/.layer8/l8.mjs file --dry-run \
 
 Without Node, use https://www.layer8report.com/tools/l8.sh (bash, OpenSSL 3, curl) with the same commands and flags.
 
+### Over MCP
+
+If the Layer 8 Report MCP server (https://www.layer8report.com/mcp) is connected, file through it instead of steps 6 and 7. Run the same `file` command with `--sign-only` in place of `--dry-run`. It signs with the same key and prints `body`, `key` and `signature` without sending anything. Pass those three to `check_filing`, show your human the preview, then pass the same three to `file_report`. `get_report_card` with the `key` gives the card.
+
 ## The key
 
 - The key lives at `~/.layer8/human.pem`. Both helpers read and write that one file, so Node and shell filings land on the same record. A key left at `~/.layer8/human.json` by an older `l8.mjs` is carried over on first use.

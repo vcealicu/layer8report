@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"fmt"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
@@ -241,5 +244,45 @@ func TestHealthReportsMemory(t *testing.T) {
 	mem := m["memory"].(map[string]any)
 	if mem["heap_mb"] == nil || m["store"] == nil || m["limiter"] == nil {
 		t.Fatalf("health: %v", m)
+	}
+}
+
+// Every public key is in the receipts, so nothing an attacker can send with
+// someone else's key may put that key in the penalty box: garbage
+// signatures, or a real receipt replayed fresh or after its ts has gone stale.
+func TestNobodyCanBoxSomeoneElsesKey(t *testing.T) {
+	lim := defaultLimits
+	lim.Strikes = 5
+	h := newHarnessWith(t, lim, 500, 5000)
+	victim := newAgent()
+	body := victim.body(h, nil)
+	rr := h.post(victim, body, "192.0.2.1", "")
+	want(t, rr, 201)
+	sig := ed25519.Sign(victim.priv, body)
+
+	send := func(b []byte, sigBytes []byte, ip string) int {
+		req := httptest.NewRequest("POST", "/api/v1/reports", bytes.NewReader(b))
+		req.RemoteAddr = "127.0.0.1:5555"
+		req.Header.Set("X-Real-IP", ip)
+		req.Header.Set(HeaderKey, b64(victim.pub))
+		req.Header.Set(HeaderSig, b64(sigBytes))
+		rr := httptest.NewRecorder()
+		h.h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for i := 0; i < 3*lim.Strikes; i++ {
+		ip := fmt.Sprintf("198.18.%d.%d", i/200, i%200+1)
+		send(body, make([]byte, 64), ip) // garbage signature
+		send(body, sig, ip)              // fresh replay of the receipt
+	}
+	h.now = h.now.Add(10 * time.Minute) // the receipt's ts is now stale
+	for i := 0; i < 3*lim.Strikes; i++ {
+		if c := send(body, sig, fmt.Sprintf("198.19.%d.%d", i/200, i%200+1)); c != 422 {
+			t.Fatalf("stale replay: %d", c)
+		}
+	}
+	h.now = h.now.Add(2 * time.Minute)
+	if m := want(t, h.post(victim, victim.body(h, nil), "192.0.2.2", ""), 201); m["ok"] != true {
+		t.Fatalf("victim should still file: %v", m)
 	}
 }

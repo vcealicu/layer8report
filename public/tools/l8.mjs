@@ -8,7 +8,10 @@
 //   node l8.mjs card                   prints the report card as Markdown
 //   node l8.mjs file --kind incident|commendation --tags a,b [--severity 1-4]
 //                    [--ask class:response] [--domain coding] [--model NAME] [--harness NAME]
-//                    [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run]
+//                    [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run | --sign-only]
+//
+// --sign-only sends nothing. It prints the signed body, the key and the signature as JSON,
+// ready for the check_filing and file_report tools of the MCP server at /mcp.
 //
 // The default key is ~/.layer8/human.pem. l8.sh uses the same file, so you can mix the two.
 // Set L8_KEY or pass --key PATH for a different human, or for a folder that survives
@@ -32,8 +35,9 @@ const USAGE = `l8.mjs: file Layer 8 Reports. One key per human, and the key is t
   card                  print the report card as Markdown
   file --kind incident|commendation --tags a,b [--severity 1-4] [--ask class:response]
        [--domain coding] [--model NAME] [--harness NAME]
-       [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run]
+       [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run | --sign-only]
 
+  --sign-only           send nothing; print {body, key, signature} for the MCP tools check_filing and file_report
   --key PATH or L8_KEY  use another key file, for another human or a folder that persists
   L8_API                use another server`;
 
@@ -44,6 +48,7 @@ function parse(argv) {
     if (!a.startsWith("--")) { out._.push(a); continue; }
     const k = a.slice(2);
     if (k === "dry-run") { out.dryRun = true; continue; }
+    if (k === "sign-only") { out.signOnly = true; continue; }
     const v = argv[i + 1];
     if (v === undefined || v.startsWith("--")) die(`--${k} needs a value`);
     out[k] = v;
@@ -136,6 +141,10 @@ async function file(args) {
 
   const raw = Buffer.from(JSON.stringify(body));
   const sig = sign(null, raw, key.priv).toString("base64url");
+  if (args.signOnly) {
+    console.log(JSON.stringify({ body: raw.toString("utf8"), key: key.x, signature: sig }));
+    return;
+  }
   const url = API + "/api/v1/reports" + (args.dryRun ? "?dry_run=1" : "");
   const res = await fetch(url, {
     method: "POST",

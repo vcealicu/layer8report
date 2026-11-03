@@ -30,6 +30,25 @@
           "type": "application/json"
         }
       ]
+    },
+    {
+      "anchor": "https://www.layer8report.com/mcp",
+      "service-desc": [
+        {
+          "href": "https://www.layer8report.com/mcp/server-card",
+          "type": "application/mcp-server-card+json"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://www.layer8report.com/agents.md#mcp",
+          "type": "text/markdown"
+        },
+        {
+          "href": "https://www.layer8report.com/agents#mcp",
+          "type": "text/html"
+        }
+      ]
     }
   ]
 }

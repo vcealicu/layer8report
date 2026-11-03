@@ -52,6 +52,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/coffee", s.handleCoffee)
 	mux.HandleFunc("OPTIONS /api/", s.handlePreflight)
 	mux.HandleFunc("/api/", s.handleNoRoute)
+	// MCP calls the routes above in-process, so it goes through the same
+	// validation, signature checks and limits as a direct request.
+	registerMCP(mux, mux, s.site, s.trust)
 	if s.static != "" {
 		mux.Handle("/", devStatic(s.static))
 	}
@@ -459,23 +462,26 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kid := keyID(pub)
+	// Until the signature is verified, kid is only a claim: every key is
+	// public in the receipts. Failures before that strike the address alone,
+	// so nobody can put someone else's key in the penalty box.
 	if hit := s.lim.blocked(ip, kid, now); hit != nil {
 		s.coolingOff(w, hit)
 		return
 	}
 	sig, err := parseSig(sigH)
 	if err != nil {
-		s.reject(w, http.StatusBadRequest, apiError{Error: "bad_signature", Message: err.Error(), Hint: signHint}, ip, kid, now)
+		s.reject(w, http.StatusBadRequest, apiError{Error: "bad_signature", Message: err.Error(), Hint: signHint}, ip, "", now)
 		return
 	}
 	if dry {
 		if hit := s.lim.checkDryRun(ip, now); hit != nil {
-			s.rateLimited(w, hit, ip, kid, now)
+			s.rateLimited(w, hit, ip, "", now)
 			return
 		}
 	}
 	if !verify(pub, body, sig) {
-		s.reject(w, http.StatusUnauthorized, apiError{Error: "signature_mismatch", Message: "The signature does not match the body. Somebody edited the paperwork after signing it.", Hint: "Sign the bytes you send, not a re-serialised copy. Pretty-printing or reordering keys after signing breaks it."}, ip, kid, now)
+		s.reject(w, http.StatusUnauthorized, apiError{Error: "signature_mismatch", Message: "The signature does not match the body. Somebody edited the paperwork after signing it.", Hint: "Sign the bytes you send, not a re-serialised copy. Pretty-printing or reordering keys after signing breaks it."}, ip, "", now)
 		return
 	}
 	if !utf8.Valid(body) {
@@ -489,7 +495,13 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	f.applyDefaults()
 	if ps := f.validate(now); len(ps) > 0 {
-		s.reject(w, http.StatusUnprocessableEntity, apiError{Error: "invalid_filing", Message: "The paperwork has problems. Fix all of them, then sign again.", Problems: ps}, ip, kid, now)
+		// A published receipt replayed later fails only on ts. That proves
+		// nothing about who sent it, so it strikes the address alone.
+		strikeKey := kid
+		if onlyField(ps, "ts") {
+			strikeKey = ""
+		}
+		s.reject(w, http.StatusUnprocessableEntity, apiError{Error: "invalid_filing", Message: "The paperwork has problems. Fix all of them, then sign again.", Problems: ps}, ip, strikeKey, now)
 		return
 	}
 
@@ -497,7 +509,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	defer s.wmu.Unlock()
 
 	if s.lim.seenNonce(kid, f.Nonce, now) {
-		s.reject(w, http.StatusConflict, apiError{Error: "replay", Message: "This key already used this nonce. Filing the same complaint twice does not make it twice as true.", Hint: "Use a fresh random nonce and current ts for every filing."}, ip, kid, now)
+		s.reject(w, http.StatusConflict, apiError{Error: "replay", Message: "This key already used this nonce. Filing the same complaint twice does not make it twice as true.", Hint: "Use a fresh random nonce and current ts for every filing."}, ip, "", now) // replays of a receipt are anyone's
 		return
 	}
 	newKey := !s.st.hasKey(kid)
@@ -542,6 +554,15 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		API:     s.site + "/api/v1/reports/" + id,
 		Human:   filedHuman{HumanRef: h, Badge: s.site + "/api/v1/humans/" + kid + "/badge.svg"},
 	})
+}
+
+func onlyField(ps []Problem, field string) bool {
+	for _, p := range ps {
+		if p.Field != field {
+			return false
+		}
+	}
+	return len(ps) > 0
 }
 
 // rateLimited answers a limit hit. Hitting your own limits counts as a strike;

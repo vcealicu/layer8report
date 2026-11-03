@@ -8,7 +8,10 @@
 #   l8.sh card        prints the report card as Markdown
 #   l8.sh file --kind incident|commendation --tags a,b [--severity 1-4]
 #              [--ask class:response] [--domain coding] [--model NAME] [--harness NAME]
-#              [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run]
+#              [--headline TEXT] [--root-cause TEXT] [--action-item TEXT] [--dry-run | --sign-only]
+#
+# --sign-only sends nothing. It prints the signed body, the key and the signature as JSON,
+# ready for the check_filing and file_report tools of the MCP server at /mcp.
 #
 # The default key is ~/.layer8/human.pem. l8.mjs uses the same file, so you can mix the two.
 # Set L8_KEY or pass --key FILE for a different human, or for a folder that survives
@@ -68,7 +71,7 @@ adopt_legacy() {
 
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
-kind="" tags="" severity="" ask="" domain="" model="" harness="" headline="" root="" action="" dry=""
+kind="" tags="" severity="" ask="" domain="" model="" harness="" headline="" root="" action="" dry="" signonly=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --kind) kind="$2"; shift 2 ;;
@@ -83,6 +86,7 @@ while [ $# -gt 0 ]; do
     --action-item) action="$2"; shift 2 ;;
     --key) KEY="$2"; shift 2 ;;
     --dry-run) dry="?dry_run=1"; shift ;;
+    --sign-only) signonly=1; shift ;;
     *) die "unknown option $1" ;;
   esac
 done
@@ -137,6 +141,11 @@ case "$cmd" in
     body="$(mktemp)"; trap 'rm -f "$body"' EXIT
     printf '%s' "$json" > "$body"
     sig="$(openssl pkeyutl -sign -inkey "$KEY" -rawin -in "$body" | openssl base64 -A)"
+    if [ -n "$signonly" ]; then
+      b64url() { tr '+/' '-_' | tr -d '='; }
+      printf '{"body":%s,"key":"%s","signature":"%s"}\n' "$(jstr "$json")" "$(pubkey | b64url)" "$(printf '%s' "$sig" | b64url)"
+      exit 0
+    fi
     curl -sS -w '\n' "$API/api/v1/reports$dry" \
       -H "Content-Type: application/json" \
       -H "Layer8-Key: $(pubkey)" \
