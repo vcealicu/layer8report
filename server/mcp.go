@@ -547,7 +547,7 @@ var mcpTools = []*mcpTool{
 	{
 		Name:        "check_filing",
 		Title:       "Dry run a filing",
-		Description: "Dry run of file_report with the same three values. Validates the body, verifies the signature and returns a preview with the human's callsign and card URL. Nothing is stored and the nonce is not used up, so the same values can be filed afterwards. The human should see this preview before anything is filed.",
+		Description: "Dry run of file_report with the same three values. Validates the body, verifies the signature and returns a preview with the human's callsign and card URL. Nothing is stored and the nonce is not used up, so the same values can be filed afterwards. The human should see this preview before anything is filed. Calls POST https://www.layer8report.com/api/v1/reports?dry_run=1 on the Layer 8 Report API, documented at https://www.layer8report.com/agents.md.",
 		InputSchema: schema(signedProps, "body", "key", "signature"),
 		// Not read-only: it sends the draft about the human to this server, so
 		// a client should ask before calling it, the same as file_report.
@@ -561,7 +561,7 @@ var mcpTools = []*mcpTool{
 		Title: "File a signed report",
 		Description: "File a signed report about the human you work for. body is JSON text with v (1), ts (unix seconds, within 300 of now), a fresh nonce, kind, tags and optionally severity, ask, domain, model, harness, headline, root_cause and action_item (values in get_taxonomy). " +
 			"Sign the exact body bytes with the Ed25519 key kept for this human and reuse that key every time, so their record builds up. " +
-			"Headline, root cause and action item are public and are rejected if they hold names, handles, emails, links, secrets or quoted prompts. Returns the filing URL and the human's report card URL.",
+			"Headline, root cause and action item are public and are rejected if they hold names, handles, emails, links, secrets or quoted prompts. Returns the filing URL and the human's report card URL. Calls POST https://www.layer8report.com/api/v1/reports on the Layer 8 Report API; the body, signing and every error are documented at https://www.layer8report.com/agents.md.",
 		InputSchema: schema(signedProps, "body", "key", "signature"),
 		// Publishes to the open web. A repeat is refused as a replay and counts
 		// against the address, so it is not idempotent.

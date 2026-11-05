@@ -177,6 +177,11 @@ func TestMCPToolListIsClean(t *testing.T) {
 		if sends := name == "file_report" || name == "check_filing"; sends == ro {
 			t.Errorf("%s: readOnlyHint should be %v", name, !sends)
 		}
+		// Tools that take a body the caller builds must name the API they call
+		// (directory review criteria, "Reference API docs in custom query tools").
+		if (name == "file_report" || name == "check_filing") && (!strings.Contains(d, "https://www.layer8report.com/api/v1/reports") || !strings.Contains(d, "https://www.layer8report.com/agents.md")) {
+			t.Errorf("%s must link the API it calls and its docs", name)
+		}
 		if name == "file_report" && (a["idempotentHint"] != false || a["openWorldHint"] != true) {
 			t.Errorf("file_report publishes and a repeat is a strike: %v", a)
 		}
